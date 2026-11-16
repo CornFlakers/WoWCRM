@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: WoW CRM
+## Notes: Post adverts with one click, capture whisper leads, and track customers, orders and referrals.
+## Version: 0.1.0
+## IconTexture: Interface\Icons\INV_Misc_Note_01
+## SavedVariables: WoWCRMDB
+## AddonCompartmentFunc: WoWCRM_OnCompartmentClick
+## X-License: MIT
+
+Util.lua
+DB.lua
+Model.lua
+Core.lua
+Chat.lua
+Capture.lua
+Mail.lua
+UI.lua

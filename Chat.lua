@@ -45,7 +45,7 @@ function Chat.Available(target)
 		local name = target == "GENERAL" and DB.settings.generalName or DB.settings.tradeName
 		local id = Chat.FindChannel(name)
 		if id then return true, nil, id end
-		return false, target == "TRADE" and "only in cities" or "channel not joined"
+		return false, "not in that channel here"
 	end
 	return false, "unknown channel"
 end

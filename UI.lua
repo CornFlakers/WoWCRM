@@ -196,13 +196,27 @@ AddTab("Posts", function(p, tab)
 	end
 	text.edit:SetScript("OnTextChanged", updateCounter)
 
+	-- The game inserts links through two different functions depending on what was clicked
+	-- (items and recipes use one, the profession link button the other), so listen to both
+	-- and ignore the second call when one click reaches both.
+	local lastLink, lastAt
 	local function insertLink(link)
-		if type(link) == "string" and text.edit:IsVisible() and text.edit:HasFocus() then text.edit:Insert(link) end
+		if type(link) ~= "string" or link == "" then return end
+		if not (text.edit:IsVisible() and text.edit:HasFocus()) then return end
+		local now = GetTime()
+		if link == lastLink and now == lastAt then return end
+		lastLink, lastAt = link, now
+		text.edit:Insert(link)
 	end
-	if ChatFrameUtil and ChatFrameUtil.InsertLink then
-		hooksecurefunc(ChatFrameUtil, "InsertLink", insertLink)
-	elseif ChatEdit_InsertLink then
-		hooksecurefunc("ChatEdit_InsertLink", insertLink)
+	if ChatFrameUtil and ChatFrameUtil.InsertLink then hooksecurefunc(ChatFrameUtil, "InsertLink", insertLink) end
+	if ChatEdit_InsertLink then hooksecurefunc("ChatEdit_InsertLink", insertLink) end
+
+	-- A direct route that does not depend on the game's own link button.
+	local function professionLink()
+		local get = (C_TradeSkillUI and C_TradeSkillUI.GetTradeSkillListLink) or GetTradeSkillListLink
+		if not get then return nil end
+		local ok, link = pcall(get)
+		if ok and type(link) == "string" and link ~= "" then return link end
 	end
 
 	local function load(post)
@@ -232,6 +246,16 @@ AddTab("Posts", function(p, tab)
 			ns.Changed()
 		end)
 	end), p, X + 212, -180)
+	At(Button(p, "Link my profession", 160, function()
+		local link = professionLink()
+		if not link then
+			UI.Msg("Open your profession window first, then press this again. (Some professions cannot be linked.)", true)
+			return
+		end
+		text.edit:SetFocus()
+		text.edit:Insert(link)
+		UI.Msg("Profession link added. Save the post to keep it.")
+	end), p, X + 340, -180)
 
 	At(Label(p, "Post to chat. Each click sends one message to one channel."), p, X, -222)
 	local nextBtn = At(Button(p, "Post next", 240), p, X, -242)

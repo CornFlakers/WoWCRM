@@ -33,7 +33,9 @@ function methods:IsShown() return self._shown end
 function methods:IsVisible() return self._shown end
 function methods:Enable() self._enabled = true end
 function methods:Disable() self._enabled = false end
-function methods:HasFocus() return false end
+function methods:HasFocus() return self._focus or false end
+function methods:SetFocus() self._focus = true end
+function methods:ClearFocus() self._focus = false end
 function methods:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
 function methods:CreateFontString() return widget("FontString", self) end
 function methods:CreateTexture() return widget("Texture", self) end
@@ -79,6 +81,10 @@ function hooksecurefunc(a, b, c)
 	tbl[name] = function(...) local r = { orig(...) }; fn(...); return unpack(r) end
 end
 function ChatEdit_InsertLink() return false end
+ChatFrameUtil = { InsertLink = function() return false end }
+local tradeLink
+C_TradeSkillUI = { GetTradeSkillListLink = function() return tradeLink end }
+function GetTime() return clock end
 local tells = {}
 function ChatFrame_SendTell(name) tells[#tells + 1] = name end
 function MailFrameTab_OnClick() end
@@ -161,6 +167,25 @@ eq(#DB.R.posts, 1, "post saved")
 eq(ns.unsaved, 1, "change counted as unsaved")
 eq(WoWCRMSaveButton._shown, true, "save button appears")
 eq(WoWCRMSaveButton._text, "WoW CRM: save 1 change", "save button text")
+
+-- links: both of the game's insert routes reach the message box, once per click
+local PROF = "|cffffd000|Htrade:Player-1:3908:197|h[Tailoring]|h|r"
+local base = edits[2]._text
+ChatEdit_InsertLink("[early]")
+eq(edits[2]._text, base, "no insert while the message box is not focused")
+edits[2]:SetFocus()
+ChatFrameUtil.InsertLink("[item]")
+ChatEdit_InsertLink(PROF)
+ChatFrameUtil.InsertLink(PROF) -- same click arriving through the other route
+eq(edits[2]._text, base .. "[item]" .. PROF, "item and profession links inserted once each")
+edits[2]:SetText(base)
+click("Link my profession", posts)
+eq(message():find("Open your profession window") ~= nil, true, "explains when no profession window is open")
+tradeLink = PROF
+click("Link my profession", posts)
+eq(edits[2]._text, base .. PROF, "profession link button inserts the link")
+edits[2]:SetText(base)
+edits[2]:ClearFocus()
 
 -- one click, one message, one channel
 tick(posts)

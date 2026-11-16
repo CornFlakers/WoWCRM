@@ -35,6 +35,24 @@ StaticPopupDialogs["WOWCRM_CONFIRM"] = {
 	preferredIndex = 3,
 }
 
+-- Three-way question used for follow-up trades: add to the current order, start a new one, or ignore.
+function ns.Choose(text, onAdd, onNew)
+	StaticPopup_Show("WOWCRM_TRADE", text, nil, { add = onAdd, new = onNew })
+end
+
+StaticPopupDialogs["WOWCRM_TRADE"] = {
+	text = "%s",
+	button1 = "Add to order",
+	button2 = "Ignore",
+	button3 = "New order",
+	OnAccept = function(_, data) if data and data.add then data.add() end end,
+	OnAlt = function(_, data) if data and data.new then data.new() end end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
 -- ---------------------------------------------------------------- saving
 -- The game writes add-on data to disk only on logout or interface reload.
 -- A reload has to come from a real click, so we offer a button for it.

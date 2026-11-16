@@ -1,6 +1,6 @@
 -- The window: Posts, Leads, Contacts, Orders, Mail, Dashboard; plus the quick-post bar.
 local _, ns = ...
-local U, DB, M, Chat, Mail = ns.Util, ns.DB, ns.Model, ns.Chat, ns.Mail
+local U, DB, M, Chat, Mail, Price = ns.Util, ns.DB, ns.Model, ns.Chat, ns.Mail, ns.Price
 local UI = {}
 ns.UI = UI
 
@@ -165,6 +165,29 @@ function UI.Msg(text, isError)
 	end
 end
 
+-- Shift-clicked links go to whichever registered box has the cursor in it.
+-- The game inserts links through two different functions depending on what was clicked
+-- (items and recipes use one, the profession link button the other), so listen to both
+-- and ignore the second call when one click reaches both.
+local linkEdits = {}
+do
+	local lastLink, lastAt
+	local function insertLink(link)
+		if type(link) ~= "string" or link == "" then return end
+		local now = GetTime()
+		if link == lastLink and now == lastAt then return end
+		for _, e in ipairs(linkEdits) do
+			if e:IsVisible() and e:HasFocus() then
+				lastLink, lastAt = link, now
+				e:Insert(link)
+				return
+			end
+		end
+	end
+	if ChatFrameUtil and ChatFrameUtil.InsertLink then hooksecurefunc(ChatFrameUtil, "InsertLink", insertLink) end
+	if ChatEdit_InsertLink then hooksecurefunc("ChatEdit_InsertLink", insertLink) end
+end
+
 local function AddTab(name, build)
 	tabs[name] = { name = name, build = build }
 	tabOrder[#tabOrder + 1] = name
@@ -196,20 +219,7 @@ AddTab("Posts", function(p, tab)
 	end
 	text.edit:SetScript("OnTextChanged", updateCounter)
 
-	-- The game inserts links through two different functions depending on what was clicked
-	-- (items and recipes use one, the profession link button the other), so listen to both
-	-- and ignore the second call when one click reaches both.
-	local lastLink, lastAt
-	local function insertLink(link)
-		if type(link) ~= "string" or link == "" then return end
-		if not (text.edit:IsVisible() and text.edit:HasFocus()) then return end
-		local now = GetTime()
-		if link == lastLink and now == lastAt then return end
-		lastLink, lastAt = link, now
-		text.edit:Insert(link)
-	end
-	if ChatFrameUtil and ChatFrameUtil.InsertLink then hooksecurefunc(ChatFrameUtil, "InsertLink", insertLink) end
-	if ChatEdit_InsertLink then hooksecurefunc("ChatEdit_InsertLink", insertLink) end
+	linkEdits[#linkEdits + 1] = text.edit
 
 	-- A direct route that does not depend on the game's own link button.
 	local function professionLink()
@@ -425,6 +435,8 @@ AddTab("Contacts", function(p, tab)
 	At(Label(p, "Notes"), p, X, -108)
 	local notes = At(MultiEdit(p, 500, 90), p, X, -124)
 	local stats = At(Label(p, "", "GameFontHighlight", 500), p, X, -222)
+	At(Label(p, "Orders  (click one to open it)"), p, X, -292)
+	local orders = At(List(p, 500, 112, function(item) UI.Show("Orders", item.id) end), p, X, -308)
 
 	local function load()
 		local c = sel and M.GetContact(sel)
@@ -450,10 +462,10 @@ AddTab("Contacts", function(p, tab)
 			end
 			UI.Msg(ok and "Contact saved." or err, not ok)
 			ns.Changed()
-		end), p, X, -330),
-		At(Button(p, "New order", 90, function() if sel then UI.Show("Orders", { contact = sel }) end end), p, X + 114, -330),
-		At(Button(p, "Mail", 60, function() if sel then UI.Show("Mail", sel) end end), p, X + 208, -330),
-		At(Button(p, "Whisper", 76, function() if sel then Chat.Whisper(sel) end end), p, X + 272, -330),
+		end), p, X, -428),
+		At(Button(p, "New order", 90, function() if sel then UI.Show("Orders", { contact = sel }) end end), p, X + 114, -428),
+		At(Button(p, "Mail", 60, function() if sel then UI.Show("Mail", sel) end end), p, X + 208, -428),
+		At(Button(p, "Whisper", 76, function() if sel then Chat.Whisper(sel) end end), p, X + 272, -428),
 		At(Button(p, "Delete", 70, function()
 			if not sel then return end
 			local key = sel
@@ -463,7 +475,7 @@ AddTab("Contacts", function(p, tab)
 				load()
 				ns.Changed()
 			end)
-		end), p, X + 352, -330),
+		end), p, X + 352, -428),
 	}
 
 	function tab.Select(key) sel = key; load(); tab.Refresh() end
@@ -486,48 +498,163 @@ AddTab("Contacts", function(p, tab)
 		end, sel)
 		local c = sel and M.GetContact(sel)
 		for _, b in ipairs(buttons) do if c then b:Enable() else b:Disable() end end
-		if not c then stats:SetText("Type a name and press Add, or target a player and press Target.") return end
-		local ltv, paid, all = M.LTV(c.key)
+		if not c then
+			orders:Set({}, function() end)
+			stats:SetText("Type a name and press Add, or target a player and press Target.")
+			return
+		end
+		orders:Set(M.OrdersFor(c.key), function(o)
+			local gold, goods = M.OrderValue(o)
+			local worth = U.FormatMoney(gold) .. (goods > 0 and (" + " .. U.FormatMoney(goods) .. " goods") or "")
+			return When(o.created) .. "   " .. M.OrderTitle(o, 44), worth .. "   " .. o.status
+		end)
+		local ltv, paid, all, ltvGold, ltvGoods = M.LTV(c.key)
 		local n, rev = M.Referrals(c.key)
 		local src = c.sourcePost and M.GetPost(c.sourcePost)
-		stats:SetText(("Lifetime value: |cffffd100%s|r   (%d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s"):format(
-			U.FormatMoney(ltv), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-"))
+		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s"):format(
+			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-"))
 	end
 end)
 
 -- ---------------------------------------------------------------- Orders
 
+local function copyLines(lines)
+	local out = {}
+	for i, l in ipairs(lines or {}) do
+		out[i] = { name = l.name, link = l.link, qty = l.qty, value = l.value, kind = l.kind, source = l.source }
+	end
+	return out
+end
+
+-- Reads "qty / name-or-link / value" boxes into a line. Returns nil when the name is empty.
+local function readLine(qtyBox, nameBox, valueBox)
+	local raw = U.Trim(nameBox:GetText())
+	if raw == "" then return nil end
+	local line = { qty = math.max(1, math.floor(tonumber(qtyBox:GetText()) or 1)) }
+	if raw:find("|H", 1, true) then
+		line.link = raw
+		line.name = raw:match("%[(.-)%]") or raw
+	else
+		line.name = raw
+	end
+	if valueBox then
+		local typed = U.Trim(valueBox:GetText())
+		if typed ~= "" then
+			line.value = U.ParseMoney(typed)
+			if not line.value then return nil, "Value not understood. Use a form like 2g 50s." end
+			line.source = "typed"
+		else
+			line.value, line.source = Price.Get(line.link)
+		end
+	end
+	return line
+end
+
 AddTab("Orders", function(p, tab)
 	local sel
-	local list = At(List(p, 360, 372, function(item) tab.Select(item.id) end), p, 0, 0)
-	local X, C = 374, 80
+	local sold, recv = {}, {} -- working copies of the order's lines; kept when Save order is pressed
+	local selSold, selRecv
+	local list = At(List(p, 290, 430, function(item) tab.Select(item.id) end), p, 0, 0)
+	local X = 304
+
 	At(Label(p, "Contact"), p, X, -4)
-	local contact = At(Edit(p, 200), p, X + C, 0)
-	At(Label(p, "Type"), p, X, -32)
-	local otype = At(Cycle(p, ns.ORDER_TYPE, 110), p, X + C - 4, -28)
-	At(Label(p, "Sold"), p, X, -60)
-	local desc = At(Edit(p, 300), p, X + C, -56)
-	At(Label(p, "Quantity"), p, X, -86)
-	local qty = At(Edit(p, 60), p, X + C, -82)
-	At(Label(p, "Price"), p, X, -112)
-	local price = At(Edit(p, 140), p, X + C, -108)
-	At(Label(p, "e.g. 12g 50s", "GameFontDisableSmall"), p, X + C + 150, -112)
-	At(Label(p, "Status"), p, X, -140)
-	local status = At(Cycle(p, ns.ORDER_STATUS, 110), p, X + C - 4, -136)
-	At(Label(p, "Notes"), p, X, -168)
-	local notes = At(Edit(p, 300), p, X + C, -164)
-	local info = At(Label(p, "", "GameFontHighlightSmall", 390), p, X, -230)
+	local contact = At(Edit(p, 170), p, X + 62, 0)
+	At(Label(p, "Gold"), p, X + 250, -4)
+	local price = At(Edit(p, 120), p, X + 290, 0)
+	At(Label(p, "Type"), p, X, -30)
+	local otype = At(Cycle(p, ns.ORDER_TYPE, 100), p, X + 58, -26)
+	At(Label(p, "Status"), p, X + 180, -30)
+	local status = At(Cycle(p, ns.ORDER_STATUS, 120), p, X + 230, -26)
+	At(Label(p, "Title"), p, X, -56)
+	local desc = At(Edit(p, 400), p, X + 62, -52)
+	At(Label(p, "Notes"), p, X, -80)
+	local notes = At(Edit(p, 400), p, X + 62, -76)
+
+	At(Label(p, "I gave them"), p, X, -106)
+	local soldList = At(List(p, 472, 70, function(item) selSold = item.id; tab.Refresh() end), p, X, -122)
+	local sQty = At(Edit(p, 34), p, X + 8, -196)
+	local sName = At(Edit(p, 240), p, X + 56, -196)
+
+	At(Label(p, "They gave me"), p, X, -224)
+	At(Label(p, "materials for the job are not income; payment and tips are", "GameFontDisableSmall"), p, X + 100, -226)
+	local recvList = At(List(p, 472, 88, function(item)
+		selRecv = item.id
+		local l = recv[item.id]
+		if l then
+			SetEdit(tab.rQty, tostring(l.qty))
+			SetEdit(tab.rName, l.link or l.name)
+			SetEdit(tab.rValue, U.FormatMoney(l.value or 0))
+		end
+		tab.Refresh()
+	end), p, X, -240)
+	local rQty = At(Edit(p, 34), p, X + 8, -332)
+	local rName = At(Edit(p, 180), p, X + 56, -332)
+	local rValue = At(Edit(p, 80), p, X + 250, -332)
+	tab.rQty, tab.rName, tab.rValue = rQty, rName, rValue
+	At(Label(p, "each (blank = look up)", "GameFontDisableSmall"), p, X + 336, -336)
+	linkEdits[#linkEdits + 1] = sName
+	linkEdits[#linkEdits + 1] = rName
+
+	local summary = At(Label(p, "", "GameFontHighlightSmall", 472), p, X, -386)
+
+	local function touched()
+		UI.Msg("Press Save order to keep these changes.")
+		tab.Refresh()
+	end
+
+	At(Button(p, "Add", 60, function()
+		local line = readLine(sQty, sName)
+		if not line then UI.Msg("Type an item name, or shift-click an item into the box.", true) return end
+		sold[#sold + 1] = line
+		SetEdit(sQty, "1"); SetEdit(sName, "")
+		touched()
+	end), p, X + 306, -197)
+	At(Button(p, "Remove", 80, function()
+		if selSold and sold[selSold] then table.remove(sold, selSold); selSold = nil; touched() end
+	end), p, X + 370, -197)
+
+	local function addReceived(kind)
+		local line, err = readLine(rQty, rName, rValue)
+		if not line then UI.Msg(err or "Type an item name, or shift-click an item into the box.", true) return end
+		line.kind = kind
+		recv[#recv + 1] = line
+		SetEdit(rQty, "1"); SetEdit(rName, ""); SetEdit(rValue, "")
+		selRecv = nil
+		touched()
+	end
+	At(Button(p, "Add payment", 96, function() addReceived("payment") end), p, X, -358)
+	At(Button(p, "Add materials", 104, function() addReceived("mats") end), p, X + 100, -358)
+	At(Button(p, "Update", 66, function()
+		local old = selRecv and recv[selRecv]
+		if not old then UI.Msg("Click a line in the list first.", true) return end
+		local line, err = readLine(rQty, rName, rValue)
+		if not line then UI.Msg(err or "The name is empty.", true) return end
+		line.kind = old.kind
+		recv[selRecv] = line
+		touched()
+	end), p, X + 208, -358)
+	At(Button(p, "Flip kind", 90, function()
+		local l = selRecv and recv[selRecv]
+		if not l then UI.Msg("Click a line in the list first.", true) return end
+		l.kind = l.kind == "mats" and "payment" or "mats"
+		touched()
+	end), p, X + 278, -358)
+	At(Button(p, "Remove", 76, function()
+		if selRecv and recv[selRecv] then table.remove(recv, selRecv); selRecv = nil; touched() end
+	end), p, X + 372, -358)
 
 	local function load(o, draft)
 		sel = o and o.id or nil
 		draft = draft or {}
+		sold, recv, selSold, selRecv = copyLines(o and o.items), copyLines(o and o.received), nil, nil
 		SetEdit(contact, o and Name(o.contact) or (draft.contact and Name(draft.contact)))
 		otype:Set(o and o.type)
 		SetEdit(desc, o and o.desc)
-		SetEdit(qty, tostring(o and o.qty or 1))
 		SetEdit(price, o and U.FormatMoney(o.price))
 		status:Set(o and o.status)
 		SetEdit(notes, o and o.notes)
+		SetEdit(sQty, "1"); SetEdit(sName, "")
+		SetEdit(rQty, "1"); SetEdit(rName, ""); SetEdit(rValue, "")
 	end
 
 	local function save(forceStatus)
@@ -535,9 +662,9 @@ AddTab("Orders", function(p, tab)
 		local c = M.FindContact(ctext)
 		local key = c and c.key or U.NormName(ctext, DB.realm, true)
 		local copper = U.ParseMoney(price:GetText())
-		if not copper then UI.Msg("Price not understood. Use a form like 12g 50s.", true) return end
+		if not copper then UI.Msg("Gold amount not understood. Use a form like 12g 50s.", true) return end
 		local o, err = M.SaveOrder(sel, {
-			contact = key, type = otype.value, desc = desc:GetText(), qty = tonumber(qty:GetText()) or 0,
+			contact = key, type = otype.value, desc = desc:GetText(), items = sold, received = recv,
 			price = copper, status = forceStatus or status.value, notes = notes:GetText(),
 		}, U.Now())
 		if not o then UI.Msg(err, true) return end
@@ -546,18 +673,18 @@ AddTab("Orders", function(p, tab)
 		ns.Changed()
 	end
 
-	At(Button(p, "Save order", 100, function() save() end), p, X, -196)
-	At(Button(p, "Mark paid", 90, function() save("paid") end), p, X + 104, -196)
-	At(Button(p, "New order", 90, function() load(nil); contact:SetFocus(); tab.Refresh() end), p, X + 198, -196)
+	At(Button(p, "Save order", 100, function() save() end), p, X, -428)
+	At(Button(p, "Mark paid", 90, function() save("paid") end), p, X + 104, -428)
+	At(Button(p, "New order", 90, function() load(nil); contact:SetFocus(); tab.Refresh() end), p, X + 198, -428)
 	At(Button(p, "Delete", 70, function()
 		local o = sel and M.GetOrder(sel)
 		if not o then return end
 		ns.Confirm("Delete this order?", function() M.DeleteOrder(o.id); load(nil); ns.Changed() end)
-	end), p, X + 292, -196)
+	end), p, X + 292, -428)
 
 	-- Select an order id, or pass { contact = key } to start a new order for that contact.
 	function tab.Select(arg)
-		if type(arg) == "table" then load(nil, arg); desc:SetFocus() else load(M.GetOrder(arg)) end
+		if type(arg) == "table" then load(nil, arg); sName:SetFocus() else load(M.GetOrder(arg)) end
 		tab.Refresh()
 	end
 	function tab.Refresh()
@@ -566,15 +693,33 @@ AddTab("Orders", function(p, tab)
 		for _, o in ipairs(DB.R.orders) do items[#items + 1] = o end
 		table.sort(items, function(a, b) if a.created ~= b.created then return a.created > b.created end return a.id > b.id end)
 		list:Set(items, function(o)
-			return Name(o.contact) .. ": " .. U.Shorten(o.desc, 40), U.FormatMoney(o.price) .. "  " .. o.status
+			local gold, goods = M.OrderValue(o)
+			return Name(o.contact) .. ": " .. M.OrderTitle(o, 30), U.FormatMoney(gold + goods) .. "  " .. o.status
 		end, sel)
-		local o = sel and M.GetOrder(sel)
-		if o then
-			info:SetText(("Created: %s\nPaid: %s%s\n\nOnly orders marked |cffffd100paid|r count towards lifetime value."):format(
-				When(o.created), When(o.paidAt), o.link and ("\nItem: " .. o.link) or ""))
-		else
-			info:SetText("New order. A contact is created automatically if the name is new.\nCompleted trades and cash-on-delivery mail offer to fill this in for you.")
+
+		local rows = {}
+		for i, l in ipairs(sold) do rows[i] = { id = i, line = l } end
+		soldList:Set(rows, function(r) return r.line.qty .. "x " .. (r.line.link or r.line.name) end, selSold)
+		rows = {}
+		local goods, mats = 0, 0
+		for i, l in ipairs(recv) do
+			rows[i] = { id = i, line = l }
+			local v = (l.value or 0) * l.qty
+			if l.kind == "mats" then mats = mats + v else goods = goods + v end
 		end
+		recvList:Set(rows, function(r)
+			local l = r.line
+			return ("%dx %s  |cff%s[%s]|r"):format(l.qty, l.link or l.name, l.kind == "mats" and "aaaaaa" or "40ff40", l.kind == "mats" and "materials" or "payment"),
+				U.FormatMoney((l.value or 0) * l.qty)
+		end, selRecv)
+
+		local gold = U.ParseMoney(price:GetText()) or 0
+		local o = sel and M.GetOrder(sel)
+		summary:SetText(("Income: |cffffd100%s|r gold + |cffffd100%s|r in goods = |cffffd100%s|r      Materials supplied: %s\n%s"):format(
+			U.FormatMoney(gold), U.FormatMoney(goods), U.FormatMoney(gold + goods), U.FormatMoney(mats),
+			o and ("Created " .. When(o.created) .. "    Paid " .. When(o.paidAt) .. "    Trades recorded: " .. (o.trades or 0)
+				.. "    Counts towards lifetime value only when paid.")
+			or "New order. Completed trades offer to fill this in for you."))
 	end
 	load(nil)
 end)
@@ -654,6 +799,8 @@ AddTab("Dashboard", function(p, tab)
 	At(Label(p, "Tracking turns off this many minutes after your last post (0 = never)", "GameFontHighlightSmall"), p, X, -52)
 	local off = At(Edit(p, 50), p, X + 330, -48)
 	At(Label(p, "Channel names:  General", "GameFontHighlightSmall"), p, X, -76)
+	At(Label(p, "A follow-up trade joins the same order for this many minutes", "GameFontHighlightSmall"), p, X, -416)
+	local win = At(Edit(p, 50), p, X + 330, -412)
 	local gen = At(Edit(p, 80), p, X + 140, -72)
 	At(Label(p, "Trade", "GameFontHighlightSmall"), p, X + 232, -76)
 	local trd = At(Edit(p, 80), p, X + 270, -72)
@@ -666,6 +813,7 @@ AddTab("Dashboard", function(p, tab)
 		if U.Trim(gen:GetText()) ~= "" then s.generalName = U.Trim(gen:GetText()) end
 		if U.Trim(trd:GetText()) ~= "" then s.tradeName = U.Trim(trd:GetText()) end
 		s.saveReminder = remind:GetChecked() and true or false
+		s.orderWindow = math.max(1, math.floor(tonumber(win:GetText()) or s.orderWindow))
 		s.promptStrangers = strangers:GetChecked() and true or false
 		UI.Msg("Settings applied.")
 		tab.loaded = false
@@ -707,12 +855,15 @@ AddTab("Dashboard", function(p, tab)
 			SetEdit(off, tostring(s.trackAutoOff))
 			SetEdit(gen, s.generalName)
 			SetEdit(trd, s.tradeName)
+			SetEdit(win, tostring(s.orderWindow))
 			remind:SetChecked(s.saveReminder)
 			strangers:SetChecked(s.promptStrangers)
 		end
 		local s = M.Stats()
 		local L = {
-			("|cffffd100Revenue (paid orders):|r %s"):format(U.FormatMoney(s.revenue)),
+			("|cffffd100Income (paid orders):|r %s"):format(U.FormatMoney(s.revenue)),
+			("  %s in gold + %s in goods received as payment"):format(U.FormatMoney(s.gold), U.FormatMoney(s.goods)),
+			("  Materials customers supplied (not income): %s"):format(U.FormatMoney(s.mats)),
 			("Paid orders: %d    Open orders: %d"):format(s.paidOrders, s.openOrders),
 			("Contacts: %d    Customers: %d    Open leads: %d"):format(s.contacts, s.customers, s.openLeads),
 			"",
@@ -728,10 +879,11 @@ AddTab("Dashboard", function(p, tab)
 		end
 		if #s.referrers == 0 then L[#L + 1] = "  none yet" end
 		L[#L + 1] = ""
-		L[#L + 1] = "|cffffd100Posts|r  (times posted / leads / revenue)"
-		for i = 1, math.min(8, #s.posts) do
+		L[#L + 1] = "|cffffd100Posts|r  (times posted / leads / gold + goods)"
+		for i = 1, math.min(6, #s.posts) do
 			local ps = s.posts[i]
-			L[#L + 1] = ("  %s:  %d / %d / %s"):format(U.Shorten(ps.name, 24), ps.sends, ps.leads, U.FormatMoney(ps.revenue))
+			L[#L + 1] = ("  %s:  %d / %d / %s + %s"):format(U.Shorten(ps.name, 24), ps.sends, ps.leads, U.FormatMoney(ps.gold), U.FormatMoney(ps.goods))
+			if #ps.sold > 0 then L[#L + 1] = "      sold: " .. M.Summary(ps.sold, 54) end
 		end
 		if #s.posts == 0 then L[#L + 1] = "  none yet" end
 		stats:SetText(table.concat(L, "\n"))
@@ -764,7 +916,7 @@ local function refreshHeader()
 end
 
 local function build()
-	main = Box(UIParent, 800, 540, 0.92)
+	main = Box(UIParent, 800, 600, 0.92)
 	main:SetPoint("CENTER")
 	main:SetFrameStrata("MEDIUM")
 	main:SetToplevel(true)

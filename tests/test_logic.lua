@@ -200,6 +200,89 @@ M.DeleteContact("Ann-Stormrage")
 eq(M.GetContact("Ben-Stormrage").referredBy, nil, "referral cleared on delete")
 eq(M.LTV("Ann-Stormrage"), 0, "orders removed with contact")
 
+-- one job across three trades: materials in, bags out, tip afterwards
+fresh()
+post = M.SavePost(nil, "Bags", "LF mats, making bags", { SAY = true })
+M.SetTracking(true, T)
+M.RecordSend(post, "SAY", T, "City")
+M.OnWhisper("Cat-Stormrage", "can you make bags?", T + 1)
+local CAT = "Cat-Stormrage"
+local job = M.AddTrade(nil, CAT, { received = { { name = "Silk Cloth", qty = 20, value = 500 } } }, T + 10)
+eq(job.status, "in progress", "materials only: job in progress")
+eq(job.received[1].kind, "mats", "goods before delivery are materials")
+eq(M.OrderTitle(job), "Job in progress", "title before anything is delivered")
+eq(M.GetContact(CAT).status, "lead", "still a lead before delivery")
+eq(M.CurrentOrder(CAT, T + 20).id, job.id, "follow-up trade finds the order")
+M.AddTrade(job.id, CAT, { given = { { name = "Silk Bag", qty = 2 } } }, T + 30)
+eq(job.status, "delivered", "free job is delivered")
+eq(M.GetContact(CAT).status, "customer", "a free job still makes a customer")
+eq(M.LTV(CAT), 0, "free job has no value yet")
+M.AddTrade(job.id, CAT, { received = { { name = "Mageweave Cloth", qty = 10, value = 4000 } }, gold = 10000 }, T + 40)
+eq(job.status, "paid", "tip makes the job paid")
+eq(job.received[2].kind, "payment", "goods after delivery are payment")
+local total, npaid, nall, lgold, lgoods = M.LTV(CAT)
+eq(total, 50000, "lifetime value is gold plus goods")
+eq(lgold, 10000, "gold part")
+eq(lgoods, 40000, "goods part")
+local _, _, jmats = M.OrderValue(job)
+eq(jmats, 10000, "materials valued but not counted as income")
+eq(job.trades, 3, "three trades, one order")
+eq(M.OrderTitle(job), "2x Silk Bag", "title from the items")
+M.AddTrade(job.id, CAT, { given = { { name = "Silk Bag", qty = 1 } } }, T + 50)
+eq(#job.items, 1, "same item merges into one line")
+eq(job.items[1].qty, 3, "quantities add up")
+eq(M.CurrentOrder(CAT, T + 50 + 61 * 60), nil, "after the window a trade starts a new order")
+
+-- goods and payment in a single trade; gold on its own
+local swap = M.AddTrade(nil, "Dan-Stormrage", { given = { { name = "Mageweave Bag", qty = 1 } }, received = { { name = "Rugged Leather", qty = 5, value = 1000 } } }, T)
+eq(swap.status, "paid", "item swapped for goods is paid")
+eq(swap.received[1].kind, "payment", "goods in the delivery trade are payment")
+eq(M.LTV("Dan-Stormrage"), 5000, "paid in goods only")
+local tip = M.AddTrade(nil, "Eve-Stormrage", { gold = 20000 }, T)
+eq(tip.type, "service", "gold alone is a service")
+eq(tip.status, "paid", "gold alone is paid")
+
+-- what a post earned, split into gold and goods, and what it sold
+s = M.Stats()
+eq(s.gold, 30000, "gold income")
+eq(s.goods, 45000, "goods income")
+eq(s.mats, 10000, "materials supplied")
+eq(s.revenue, 75000, "total income")
+eq(s.posts[1].gold, 10000, "gold per post")
+eq(s.posts[1].goods, 40000, "goods per post")
+eq(s.posts[1].sold[1].name, "Silk Bag", "items sold per post")
+eq(s.posts[1].sold[1].qty, 3, "quantity sold per post")
+
+-- item lines survive export and import
+dump = M.Export()
+DB.Init({}, "Other2")
+added = M.Import(dump, T + 100)
+eq(added.orders, 3, "orders with lines imported")
+total, npaid, nall, lgold, lgoods = M.LTV(CAT)
+eq(lgold, 10000, "gold survives the round trip")
+eq(lgoods, 40000, "goods survive the round trip")
+eq(M.OrdersFor(CAT)[1].received[1].kind, "mats", "materials line survives the round trip")
+eq(M.OrdersFor(CAT)[1].items[1].qty, 3, "item quantity survives the round trip")
+
+-- text exported by the first version still imports
+DB.Init({}, "Other3")
+added = M.Import("WOWCRM1\nO\tZed-R\tgoods\tOld thing\t2\t30000\tpaid\t1000\t1000\t\t", T)
+eq(added.orders, 1, "old export format accepted")
+eq(M.OrdersFor("Zed-R")[1].items[1].name, "Old thing", "old description becomes an item")
+eq(M.OrdersFor("Zed-R")[1].items[1].qty, 2, "old quantity kept")
+eq(M.LTV("Zed-R"), 30000, "old price kept")
+
+-- data saved by the first version is upgraded
+local v1 = { version = 1, settings = {}, realms = { R1 = {
+	orders = { { id = 1, contact = "A-R1", desc = "3x Mana Oil", qty = 1, price = 50000, status = "paid", created = T, type = "goods", notes = "" } },
+	contacts = { ["A-R1"] = { key = "A-R1", status = "customer", tags = "", notes = "" } },
+} } }
+DB.Init(v1, "R1")
+eq(v1.version, 2, "saved data upgraded")
+eq(DB.R.orders[1].items[1].name, "3x Mana Oil", "old order keeps what was sold")
+eq(M.LTV("A-R1"), 50000, "old order keeps its value")
+eq(M.OrderTitle(DB.R.orders[1]), "3x Mana Oil", "old order still has a title")
+
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")
 eq(saved.settings.minGap, DB.MIN_GAP_FLOOR, "gap floor enforced")

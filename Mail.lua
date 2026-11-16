@@ -24,7 +24,7 @@ function Mail.Vars(key)
 		if o.contact == key and (not latest or o.created >= latest.created) then latest = o end
 	end
 	if latest then
-		vars.item = latest.desc
+		vars.item = M.OrderTitle(latest, 60)
 		vars.total = U.FormatMoney(latest.price)
 	end
 	return vars

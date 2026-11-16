@@ -3,13 +3,14 @@ local _, ns = ...
 local DB = {}
 ns.DB = DB
 
-DB.VERSION = 1
+DB.VERSION = 2
 
 local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
 	saveReminder = true,  -- show the "Save changes" button
 	promptStrangers = true, -- offer to record a sale to someone who is not yet a contact
+	orderWindow = 60,     -- minutes during which a follow-up trade is offered as part of the same order
 	generalName = "General",
 	tradeName = "Trade",
 }
@@ -17,6 +18,19 @@ DB.MIN_GAP_FLOOR = 30
 
 -- MIGRATIONS[n] upgrades data from version n to n + 1.
 local MIGRATIONS = {}
+
+-- 1 -> 2: an order's single description becomes a list of items given and a list of things received.
+MIGRATIONS[1] = function(saved)
+	for _, R in pairs(saved.realms or {}) do
+		for _, o in ipairs(R.orders or {}) do
+			if not o.items then
+				o.items = { { name = o.desc or "item", link = o.link, qty = o.qty or 1 } }
+				o.received = {}
+				o.desc, o.qty, o.link = "", nil, nil
+			end
+		end
+	end
+end
 
 local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates" }
 

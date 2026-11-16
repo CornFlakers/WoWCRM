@@ -93,9 +93,16 @@ function GetSendMailCOD() return 70000 end
 function GetSendMailItem(i) if i == 1 then return "Runed Rod", 1, nil, 2 end end
 function GetSendMailItemLink(i) if i == 1 then return "|cffffffff|Hitem:1::::::::|h[Runed Rod]|h|r" end end
 LE_GAME_ERR_TRADE_COMPLETE = 77
-function GetTargetTradeMoney() return 50000 end
-function GetTradePlayerItemLink(i) if i == 1 then return "|cffffffff|Hitem:2::::::::|h[Mana Oil]|h|r" end end
-function GetTradePlayerItemInfo(i) if i == 1 then return "Mana Oil", nil, 3 end end
+-- what the next trade window holds: { name, count } on each side, and gold coming in
+local tGive, tGet, tGold = nil, nil, 0
+local function link(name) return "|cffffffff|Hitem:2::::::::|h[" .. name .. "]|h|r" end
+function GetTargetTradeMoney() return tGold end
+function GetPlayerTradeMoney() return 0 end
+function GetTradePlayerItemLink(i) if i == 1 and tGive then return link(tGive[1]) end end
+function GetTradePlayerItemInfo(i) if i == 1 and tGive then return tGive[1], nil, tGive[2] end end
+function GetTradeTargetItemLink(i) if i == 1 and tGet then return link(tGet[1]) end end
+function GetTradeTargetItemInfo(i) if i == 1 and tGet then return tGet[1], nil, tGet[2] end end
+Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end } } }
 
 -- ---------------------------------------------------------------- load the add-on in TOC order
 local ns, files = {}, {}
@@ -103,7 +110,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	line = line:gsub("%s+$", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
-assert(#files == 8, "TOC should list 8 files, found " .. #files)
+assert(#files == 9, "TOC should list 9 files, found " .. #files)
 local globalsBefore = {}
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
@@ -229,19 +236,38 @@ click("Whisper back", leads)
 eq(tells[1], "Ann", "whisper back opens a tell")
 click("New order", leads)
 local orders = UI.tabs.Orders.panel
-local oe = kind("EditBox", orders)
-eq(#oe, 5, "order form fields")
+local oe = kind("EditBox", orders) -- contact, gold, title, notes, sold qty, sold name, received qty, name, value
+eq(#oe, 9, "order form fields")
 eq(oe[1]._text, "Ann", "contact carried over from the lead")
-oe[2]:SetText("Weapon enchant")
-oe[4]:SetText("banana")
 click("Mark paid", orders)
-eq(#DB.R.orders, 0, "bad price refused")
-oe[4]:SetText("12g 50s")
+eq(#DB.R.orders, 0, "empty order refused")
+oe[6]:SetText("Weapon enchant")
+click("Add", orders)
+oe[2]:SetText("banana")
+click("Mark paid", orders)
+eq(#DB.R.orders, 0, "bad gold amount refused")
+oe[2]:SetText("12g 50s")
 click("Mark paid", orders)
 eq(#DB.R.orders, 1, "order saved")
+eq(DB.R.orders[1].items[1].name, "Weapon enchant", "sold item kept as its own line")
 eq(M.LTV("Ann-Stormrage"), 125000, "lifetime value from the paid order")
 eq(DB.R.leads[1].status, "won", "lead closed by the order")
 eq(M.GetContact("Ann-Stormrage").status, "customer", "lead promoted to customer")
+
+-- a tip in goods: typed value, then flipped to materials and back out of income
+oe[7]:SetText("20")
+oe[8]:SetText("Silk Cloth")
+oe[9]:SetText("5s")
+click("Add payment", orders)
+click("Save order", orders)
+eq(M.LTV("Ann-Stormrage"), 135000, "goods received as payment add to lifetime value")
+for _, w in ipairs(widgets) do
+	if type(w.item) == "table" and w.item.line and w.item.line.kind and inside(w, orders) and w._shown then w._scripts.OnClick(w) end
+end
+click("Flip kind", orders)
+click("Save order", orders)
+eq(DB.R.orders[1].received[1].kind, "mats", "line flipped to materials")
+eq(M.LTV("Ann-Stormrage"), 125000, "materials for the job are not income")
 
 -- contact with a referrer
 UI.Show("Contacts", "Bob-Stormrage")
@@ -257,19 +283,43 @@ ce[1]:SetText("carl")
 click("Add", contacts)
 eq(M.GetContact("Carl-Stormrage") ~= nil, true, "contact added by name")
 
--- a completed trade offers an order
+-- one job across three trades: materials in, bags out, tip afterwards
 local before = #DB.R.orders
-fire("TRADE_SHOW")
-fire("TRADE_ACCEPT_UPDATE", 1, 1)
-fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
-eq(#DB.R.orders, before + 1, "trade recorded after confirming")
+local function doTrade(give, get, gold)
+	tGive, tGet, tGold = give, get, gold
+	fire("TRADE_SHOW")
+	fire("TRADE_ACCEPT_UPDATE", 1, 1)
+	fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
+end
+doTrade(nil, { "Silk Cloth", 20 }, 0)
+eq(#DB.R.orders, before + 1, "materials trade starts an order")
 local o = DB.R.orders[#DB.R.orders]
 eq(o.contact, "Buyer-Stormrage", "trade partner")
-eq(o.desc, "3x Mana Oil", "items described")
-eq(o.price, 50000, "gold received")
-eq(o.status, "paid", "trade with gold is paid")
+eq(o.status, "in progress", "materials received, nothing delivered yet")
+eq(o.received[1].kind, "mats", "goods before delivery are materials")
+eq(o.received[1].value, 250, "valued from the auction add-on")
+doTrade({ "Silk Bag", 2 }, nil, 0)
+eq(#DB.R.orders, before + 1, "follow-up trade joins the same order")
+eq(o.status, "delivered", "free job is delivered, not paid")
+eq(M.OrderTitle(o), "2x Silk Bag", "items described")
+doTrade(nil, { "Mageweave Cloth", 5 }, 50000)
+eq(#DB.R.orders, before + 1, "tip trade joins the same order")
+eq(o.status, "paid", "tip makes it paid")
+eq(o.received[2].kind, "payment", "goods after delivery are payment")
+local og, ogoods, omats = M.OrderValue(o)
+eq(og, 50000, "gold on the order")
+eq(ogoods, 1250, "goods value on the order")
+eq(omats, 5000, "materials value on the order")
+eq(o.trades, 3, "three trades on one order")
 fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
-eq(#DB.R.orders, before + 1, "the same trade is not recorded twice")
+eq(o.trades, 3, "the same trade is not recorded twice")
+
+-- the contact page lists the orders and opens one on click
+UI.Show("Contacts", "Ann-Stormrage")
+for _, w in ipairs(widgets) do
+	if w.item == DB.R.orders[1] and inside(w, contacts) and w._shown then w._scripts.OnClick(w) end
+end
+eq(kind("EditBox", orders)[2]._text, "12g 50s", "clicking an order on the contact page opens it")
 
 -- mail
 UI.Show("Mail", "Ann-Stormrage")
@@ -287,6 +337,7 @@ fire("MAIL_SEND_SUCCESS")
 eq(#DB.R.mailLog, 1, "sent mail logged against the contact")
 eq(#DB.R.orders, before + 1, "cash-on-delivery mail recorded after confirming")
 eq(DB.R.orders[#DB.R.orders].status, "delivered", "COD is delivered, not yet paid")
+eq(DB.R.orders[#DB.R.orders].items[1].qty, 2, "COD attachments become item lines")
 eq(DB.R.orders[#DB.R.orders].contact, "Ann-Stormrage", "COD order on the right contact")
 fire("MAIL_CLOSED")
 
@@ -294,7 +345,9 @@ fire("MAIL_CLOSED")
 UI.Show("Dashboard")
 local dash = UI.tabs.Dashboard.panel
 click("Export", dash)
-eq(kind("EditBox", dash)[5]._text:sub(1, 7), "WOWCRM1", "export produced")
+local exported = false
+for _, w in ipairs(kind("EditBox", dash)) do if w._text:sub(1, 7) == "WOWCRM2" then exported = true end end
+eq(exported, true, "export produced")
 click("Apply settings", dash)
 SlashCmdList.WOWCRM("bar")
 eq(DB.settings.barShown, true, "quick-post bar shown")

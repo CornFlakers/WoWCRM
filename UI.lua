@@ -289,9 +289,29 @@ AddTab("Posts", function(p, tab)
 	At(Label(p, "Posting uses the saved version of the post. A channel is greyed out when you are\nnot in it, or while its gap between posts is still running.", "GameFontDisableSmall"), p, X, -312)
 	At(Button(p, "Show / hide quick-post bar", 200, function() UI.ToggleBar() end), p, X, -346)
 
+	-- Send this post privately: to a named player, or straight back to whoever whispered last.
+	At(Label(p, "Whisper this post to"), p, X, -384)
+	local whisperTo = At(Edit(p, 150), p, X + 134, -380)
+	At(Button(p, "Whisper", 76, function()
+		local post = sel and M.GetPost(sel)
+		if not post then UI.Msg("Save the post first.", true) return end
+		local ok, res = Chat.WhisperPost(post, whisperTo:GetText())
+		UI.Msg(ok and ("Whispered to " .. res .. ".") or res, not ok)
+	end), p, X + 290, -381)
+	local replyBtn = At(Button(p, "Reply to last whisper", 190, function()
+		local post = sel and M.GetPost(sel)
+		if not post then UI.Msg("Save the post first.", true) return end
+		if not ns.lastWhisperFrom then UI.Msg("Nobody has whispered you this session.", true) return end
+		local ok, res = Chat.WhisperPost(post, Name(ns.lastWhisperFrom))
+		UI.Msg(ok and ("Whispered to " .. res .. ".") or res, not ok)
+	end), p, X + 370, -381)
+	At(Label(p, "A whisper is private: it is not counted as a post and has no waiting time.", "GameFontDisableSmall"), p, X, -408)
+
 	local function updateButtons()
 		local post = sel and M.GetPost(sel)
 		local now = U.Now()
+		replyBtn:SetText(ns.lastWhisperFrom and ("Reply to " .. U.Shorten(Name(ns.lastWhisperFrom), 16)) or "Reply to last whisper")
+		if ns.lastWhisperFrom and post then replyBtn:Enable() else replyBtn:Disable() end
 		for _, t in ipairs(ns.TARGETS) do
 			local ok = post and post.targets[t] and Chat.Available(t) and M.GapRemaining(t, now) == 0
 			if ok then targetBtns[t]:Enable() else targetBtns[t]:Disable() end
@@ -320,8 +340,14 @@ AddTab("Posts", function(p, tab)
 		if elapsed > 0.5 then elapsed = 0; updateButtons() end
 	end)
 
-	function tab.Select(id)
-		load(M.GetPost(id))
+	-- Select a post id, or pass { to = contactKey } to aim the whisper box at someone.
+	function tab.Select(arg)
+		if type(arg) == "table" then
+			SetEdit(whisperTo, arg.to and Name(arg.to) or "")
+			if not sel and DB.R.posts[1] then load(DB.R.posts[1]) end
+		else
+			load(M.GetPost(arg))
+		end
 		tab.Refresh()
 	end
 	function tab.Refresh()
@@ -365,6 +391,10 @@ AddTab("Leads", function(p, tab)
 				ns.Changed()
 			end)
 		end), p, X + 114, -316),
+		At(Button(p, "Reply with a post", 140, function()
+			local l = lead()
+			if l then UI.Show("Posts", { to = l.contact }) end
+		end), p, X + 268, -316),
 	}
 	toggle:SetScript("OnClick", function()
 		showClosed = not showClosed
@@ -1243,8 +1273,10 @@ AddTab("Options", function(p, tab)
 	check("promptStrangers", "Offer to record sales to people who are not contacts yet")
 	header("Follow-up letters")
 	number("outreachGap", "Days before someone you wrote to returns to the top of the follow-up list", 0)
-	header("Saving")
-	check("saveReminder", "Show the Save button after changes")
+	header("Backups  (logging out always saves; this only guards against a crash)")
+	check("saveReminder", "Offer a backup at quiet moments (standing still or resting, never in combat or while trading)")
+	number("saveAfterChanges", "...once this many changes are waiting", 1)
+	number("saveAfterMinutes", "...or once the oldest waiting change is this many minutes old", 1)
 
 	local function load()
 		for _, f in ipairs(fields) do
@@ -1329,6 +1361,7 @@ function UI.CampaignTick()
 		ns.Print(("campaign \"%s\" finished: posted %d times, %d leads, %d orders, %s gold + %s in goods so far."):format(
 			finished.name, rep.sends, rep.leads, rep.orders, U.FormatMoney(rep.gold), U.FormatMoney(rep.goods)))
 		wasDue = false
+		ns.OfferSave()
 		ns.Changed(true)
 	end
 	if not c then
@@ -1401,10 +1434,10 @@ local function refreshHeader()
 			or "|cffffff00Waiting for your first post.|r Whispers are captured after you post." .. tail)
 	end
 	if ns.unsaved > 0 then
-		main.save:SetText(("Save %d change%s"):format(ns.unsaved, ns.unsaved == 1 and "" or "s"))
+		main.save:SetText(("Back up now (%d)"):format(ns.unsaved))
 		main.save:Enable()
 	else
-		main.save:SetText("All saved")
+		main.save:SetText("Nothing to back up")
 		main.save:Disable()
 	end
 end

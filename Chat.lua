@@ -84,6 +84,21 @@ function Chat.SendNext(post)
 	return false, err
 end
 
+-- Whispers a saved post to one player. This is a private message, so it is not counted as a
+-- post, has no waiting time, and does not move the post's channel rotation.
+function Chat.WhisperPost(post, who)
+	who = U.Trim(who)
+	if who == "" then return false, "Type who to whisper." end
+	local contact = M.FindContact(who)
+	local name = contact and U.Display(contact.key, DB.realm) or who
+	local text = Chat.Render(post)
+	if U.ByteLen(text) > ns.MAX_CHAT_BYTES then
+		return false, ("Message is %d bytes after filling in tokens; the limit is %d."):format(U.ByteLen(text), ns.MAX_CHAT_BYTES)
+	end
+	sendChat(text, "WHISPER", name)
+	return true, name
+end
+
 -- One click during a campaign: send whatever the campaign says is due.
 function Chat.CampaignPost()
 	local now = U.Now()
@@ -106,6 +121,7 @@ ns.On("CHAT_MSG_WHISPER", function(text, sender)
 	if isSecret(text) then text = "(hidden during combat)" end
 	local key = U.NormName(sender, DB.realm)
 	if not key then return end
+	ns.lastWhisperFrom = key
 	local lead, isNew = M.OnWhisper(key, tostring(text or ""), U.Now())
 	if lead then
 		ns.Print((isNew and "new contact and lead: " or "lead from ") .. U.Display(key, DB.realm))

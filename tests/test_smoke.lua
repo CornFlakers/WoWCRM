@@ -49,6 +49,7 @@ end
 UIParent = widget("Frame")
 GameTooltip = widget("GameTooltip")
 MailFrame = widget("Frame")
+MailFrame:Hide() -- closed until the test walks up to a mailbox
 SendMailNameEditBox, SendMailSubjectEditBox, SendMailBodyEditBox = widget("EditBox"), widget("EditBox"), widget("EditBox")
 ChatFontNormal = {}
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) printed[#printed + 1] = m end }
@@ -59,7 +60,10 @@ date = os.date
 time = function() return clock end
 local popups = 0
 function StaticPopup_Show(which, _, _, data) popups = popups + 1; StaticPopupDialogs[which].OnAccept(nil, data) end
-function InCombatLockdown() return false end
+local inCombat, speed, resting = false, 0, false
+function InCombatLockdown() return inCombat end
+function GetUnitSpeed() return speed end
+function IsResting() return resting end
 function GetNormalizedRealmName() return "Stormrage" end
 function GetRealmName() return "Stormrage" end
 function UnitName(unit) if unit == "player" then return "Seller" elseif unit == "NPC" then return "Buyer" end return "Targ" end
@@ -181,7 +185,7 @@ for name in pairs(UI.tabs) do UI.Show(name) end
 UI.Show("Posts")
 local posts = UI.tabs.Posts.panel
 local edits, checks = kind("EditBox", posts), kind("CheckButton", posts)
-eq(#edits, 2, "post editor has a name and a message box")
+eq(#edits, 3, "post editor has a name, a message box and a whisper box")
 eq(#checks, 6, "six channel boxes")
 click("Save post", posts)
 eq(#DB.R.posts, 0, "empty post refused")
@@ -193,8 +197,37 @@ checks[5]:SetChecked(true) -- Party
 click("Save post", posts)
 eq(#DB.R.posts, 1, "post saved")
 eq(ns.unsaved, 1, "change counted as unsaved")
-eq(WoWCRMSaveButton._shown, true, "save button appears")
-eq(WoWCRMSaveButton._text, "WoW CRM: save 1 change", "save button text")
+eq(WoWCRMSaveButton._shown, false, "one change does not bring up the backup offer")
+local function saveTick() ns.eventFrame._scripts.OnUpdate(ns.eventFrame, 3) end
+local realUnsaved = ns.unsaved
+ns.unsaved = 25
+saveTick()
+eq(WoWCRMSaveButton._shown, true, "offer appears once enough changes are waiting and you are standing still")
+eq(WoWCRMSaveButton._text, "WoW CRM: back up 25 changes", "backup button text")
+speed = 7
+saveTick()
+eq(WoWCRMSaveButton._shown, false, "no offer while you are on the move")
+speed = 0
+saveTick()
+eq(WoWCRMSaveButton._shown, false, "nor in the first seconds after stopping")
+resting = true
+saveTick()
+eq(WoWCRMSaveButton._shown, true, "resting counts as a quiet moment straight away")
+inCombat = true
+saveTick()
+eq(WoWCRMSaveButton._shown, false, "never in combat")
+inCombat, resting = false, false
+clock = clock + 15
+saveTick()
+eq(WoWCRMSaveButton._shown, true, "offer returns after standing still for a while")
+ns.unsaved = realUnsaved
+saveTick()
+eq(WoWCRMSaveButton._shown, false, "back below the threshold, no offer")
+ns.firstUnsaved = clock - 31 * 60
+saveTick()
+eq(WoWCRMSaveButton._shown, true, "a change that has waited half an hour is offered too")
+ns.firstUnsaved = clock
+saveTick()
 
 -- links: both of the game's insert routes reach the message box, once per click
 local PROF = "|cffffd000|Htrade:Player-1:3908:197|h[Tailoring]|h|r"
@@ -233,6 +266,19 @@ clock = clock + 61
 tick(posts)
 eq(find("Post to Say", posts) ~= nil, true, "say available again after the gap")
 
+-- whisper a post to someone
+local pe2 = kind("EditBox", posts) -- name, message, whisper to
+eq(#pe2, 3, "post editor has a whisper box")
+eq(find("Reply to last whisper", posts)._enabled, false, "no reply button until someone whispers")
+pe2[3]:SetText("Zed")
+local beforeWhisper, logBefore = #sent, #DB.R.postLog
+click("Whisper", posts)
+eq(#sent, beforeWhisper + 1, "whisper sent")
+eq(sent[#sent].type, "WHISPER", "as a whisper")
+eq(sent[#sent].channel, "Zed", "to the named player")
+eq(sent[#sent].text, "WTS enchants in City, whisper Seller", "with the post's text")
+eq(#DB.R.postLog, logBefore, "a whisper is not counted as a post")
+
 -- tracking and whispers
 fire("CHAT_MSG_WHISPER", "too early", "Early-Stormrage")
 eq(#DB.R.leads, 0, "no capture while tracking is off")
@@ -246,6 +292,10 @@ eq(#DB.R.leads, 2, "two leads captured, hidden sender skipped")
 eq(M.GetContact("Ann-Stormrage").status, "lead", "whisperer becomes a contact")
 eq(DB.R.leads[2].text, "(hidden during combat)", "hidden text handled")
 eq(M.GetContact("Bob-Stormrage") ~= nil, true, "realm added to bare names")
+tick(posts)
+click("Reply to Bob", posts)
+eq(sent[#sent].type, "WHISPER", "reply goes out as a whisper")
+eq(sent[#sent].channel, "Bob", "to whoever whispered last")
 
 -- lead -> order
 UI.Show("Leads")
@@ -346,6 +396,7 @@ eq(kind("EditBox", orders)[2]._text, "12g 50s", "clicking an order on the contac
 UI.Show("Mail", "Ann-Stormrage")
 local mail = UI.tabs.Mail.panel
 eq(find("Fill in letter", mail)._enabled, false, "no letter away from a mailbox")
+MailFrame:Show()
 fire("MAIL_SHOW")
 click("Fill in letter", mail)
 eq(SendMailNameEditBox._text, "Ann", "recipient filled in")
@@ -378,6 +429,7 @@ SendMail("Carl", "s", "b")
 fire("MAIL_SEND_SUCCESS")
 eq(M.GetContact("Carl-Stormrage").outreach, 1, "follow-up to the lead counted")
 eq(M.GetContact("Carl-Stormrage").lastTemplate, "Order ready", "template used is remembered")
+MailFrame:Hide()
 fire("MAIL_CLOSED")
 
 -- dashboard, bar, probe
@@ -437,6 +489,9 @@ clock = clock + 1800
 UI.CampaignTick()
 eq(running.status, "ended", "campaign ends when its time is up")
 eq(find("Start one on the Campaigns tab") ~= nil, true, "bar says no campaign is running")
+clock = clock + 15
+ns.eventFrame._scripts.OnUpdate(ns.eventFrame, 3)
+eq(WoWCRMSaveButton._shown, true, "a finished campaign is a natural moment to offer a backup")
 
 -- products: read from the recipe scan, with prices and cross-profession materials
 UI.Show("Products")

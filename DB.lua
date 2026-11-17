@@ -8,7 +8,9 @@ DB.VERSION = 2
 local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
-	saveReminder = true,  -- show the "Save changes" button
+	saveReminder = true,  -- offer a backup at quiet moments
+	saveAfterChanges = 25, -- ...once this many changes are waiting
+	saveAfterMinutes = 30, -- ...or the oldest waiting change is this old
 	promptStrangers = true, -- offer to record a sale to someone who is not yet a contact
 	campaignMinutes = 60, -- usual length of a campaign
 	postInterval = 5,     -- usual minutes between posts to the same channel during a campaign

@@ -11,7 +11,10 @@ end
 
 -- Called after any change the user would not want to lose.
 function ns.Changed(silent)
-	if not silent then ns.unsaved = ns.unsaved + 1 end
+	if not silent then
+		if ns.unsaved == 0 then ns.firstUnsaved = U.Now() end
+		ns.unsaved = ns.unsaved + 1
+	end
 	ns.Notify()
 end
 
@@ -54,8 +57,11 @@ StaticPopupDialogs["WOWCRM_TRADE"] = {
 }
 
 -- ---------------------------------------------------------------- saving
--- The game writes add-on data to disk only on logout or interface reload.
--- A reload has to come from a real click, so we offer a button for it.
+-- The game writes add-on data to disk when the interface shuts down: logging out, leaving
+-- the game or reloading. A normal logout therefore saves everything. The only way to lose
+-- changes is the game dying mid-session (a crash or a power cut), so a backup is offered
+-- now and then, at a quiet moment, as insurance. It reloads the interface, which must come
+-- from a real click.
 
 local function reload()
 	if C_UI and C_UI.Reload then C_UI.Reload() else ReloadUI() end
@@ -63,29 +69,50 @@ end
 ns.SaveNow = reload
 
 local saveButton = CreateFrame("Button", "WoWCRMSaveButton", UIParent, "UIPanelButtonTemplate")
-saveButton:SetSize(220, 26)
+saveButton:SetSize(240, 26)
 saveButton:SetPoint("TOP", UIParent, "TOP", 0, -140)
 saveButton:SetFrameStrata("HIGH")
 saveButton:Hide()
 saveButton:SetScript("OnClick", reload)
 saveButton:SetScript("OnEnter", function(self)
 	GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-	GameTooltip:AddLine("WoW CRM")
-	GameTooltip:AddLine("Reloads the interface, which writes your CRM data to disk.\nIt also saves when you log out normally.", 1, 1, 1, true)
+	GameTooltip:AddLine("WoW CRM backup")
+	GameTooltip:AddLine("Logging out saves everything on its own. This is only insurance against a crash:\nit reloads the interface (about two seconds), which writes your CRM data now.", 1, 1, 1, true)
 	GameTooltip:Show()
 end)
 saveButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+local lastMoved, offerUntil = 0, 0
+local QUIET_SECONDS = 10
+
+-- Called at a natural stopping point (a campaign finishing): offer the backup for a few minutes
+-- even if not many changes are waiting.
+function ns.OfferSave()
+	offerUntil = U.Now() + 300
+end
+
+-- Is this a moment when a two-second reload costs nothing?
+local function quietMoment(now)
+	if InCombatLockdown() then return false end
+	if (TradeFrame and TradeFrame:IsShown()) or (MailFrame and MailFrame:IsShown()) then return false end
+	if IsResting and IsResting() then return true end
+	return now - lastMoved >= QUIET_SECONDS
+end
+
 local function updateSaveButton()
 	if not DB.settings then return end
-	local show = ns.unsaved > 0 and DB.settings.saveReminder and not InCombatLockdown()
-	if show then
-		saveButton:SetText(("WoW CRM: save %d change%s"):format(ns.unsaved, ns.unsaved == 1 and "" or "s"))
+	local s, now = DB.settings, U.Now()
+	local enough = ns.unsaved >= (s.saveAfterChanges or 25)
+		or (ns.firstUnsaved and now - ns.firstUnsaved >= (s.saveAfterMinutes or 30) * 60)
+		or now < offerUntil
+	if s.saveReminder and ns.unsaved > 0 and enough and quietMoment(now) then
+		saveButton:SetText(("WoW CRM: back up %d change%s"):format(ns.unsaved, ns.unsaved == 1 and "" or "s"))
 		saveButton:Show()
 	else
 		saveButton:Hide()
 	end
 end
+ns.UpdateSaveButton = updateSaveButton
 table.insert(ns.listeners, updateSaveButton)
 
 -- ---------------------------------------------------------------- events
@@ -109,6 +136,19 @@ frame:SetScript("OnEvent", function(_, event, ...)
 	local h = handlers[event]
 	if h then h(...) end
 end)
+
+-- Every couple of seconds: note whether the player is on the move, and show or hide the backup offer.
+do
+	local elapsed = 0
+	frame:SetScript("OnUpdate", function(_, dt)
+		elapsed = elapsed + dt
+		if elapsed < 2 then return end
+		elapsed = 0
+		if not ns.ready then return end
+		if GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0 then lastMoved = U.Now() end
+		updateSaveButton()
+	end)
+end
 
 ns.On("PLAYER_LOGIN", function()
 	local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName() or "Unknown"):gsub("[%s%-]", "")

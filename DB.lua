@@ -8,6 +8,7 @@ DB.VERSION = 2
 local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
+	heldFree = true,      -- materials already held count as costing nothing
 	saveReminder = true,  -- offer a backup at quiet moments
 	saveAfterChanges = 25, -- ...once this many changes are waiting
 	saveAfterMinutes = 30, -- ...or the oldest waiting change is this old

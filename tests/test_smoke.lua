@@ -505,7 +505,14 @@ end
 eq(row("Runecloth Bag") ~= nil, true, "recipes listed for the chosen profession")
 eq(row("Runecloth Bag").item.canMake, 2, "12 cloth in bags at 5 each makes 2")
 local boxes = kind("CheckButton", prod) -- learned, have the mats, my products, then the five places to count
-eq(#boxes, 8, "three filters and five places to count")
+eq(#boxes, 9, "three filters, five places to count, and held-mats-are-free")
+eq(DB.settings.heldFree, true, "held mats count as free unless switched off")
+eq(row("Runecloth Bag").item.cost, 0, "12 cloth in bags covers the 5 needed: nothing to buy")
+boxes[9]:SetChecked(false)
+boxes[9]._scripts.OnClick(boxes[9])
+eq(row("Runecloth Bag").item.cost, 1250, "switched off: all 5 cloth at today's price")
+boxes[9]:SetChecked(true)
+boxes[9]._scripts.OnClick(boxes[9])
 local function tick(i, on) boxes[i]:SetChecked(on); boxes[i]._scripts.OnClick(boxes[i]) end
 tick(5, true)
 eq(row("Runecloth Bag").item.canMake, 4, "adding my bank: 20 cloth makes 4")

@@ -408,6 +408,31 @@ eq(prows[1].product, true, "marked as my product")
 eq(prows[2].unpriced, 1, "material without a price is counted")
 eq(prows[3].category, "Other", "missing category")
 eq(prows[1].canMake, 2, "9 cloth at 4 each makes 2")
+eq(prows[1].buy, 0, "holding every material leaves nothing to buy")
+eq(prows[1].cost, 400, "cost stays at full price unless held mats are treated as free")
+eq(prows[2].buy, 0, "priced materials are held; the missing one has no price")
+eq(prows[2].unpricedBuy, 1, "a missing material without a price is flagged")
+local function build(have, free)
+	return Cat.Build({ { id = 1, name = "Silk Bag", category = "Bags", learned = true, output = 10, reagents = { { itemID = 1, qty = 4 }, { itemID = 11, qty = 1 } } } },
+		"Tailoring", function(i) return cost[i] or 0 end, {}, {}, function(i) return have[i] or 0 end, nil, free)[1]
+end
+local b = build({ [1] = 3 }, true)
+eq(b.mats, 700, "every material at today's price")
+eq(b.buy, 400, "only the shortfall is bought: 1 cloth and the 1 thread")
+eq(b.cost, 400, "held mats free: cost is what is still to buy")
+eq(b.margin, 600, "margin after what you hold")
+eq(b.reagents[1].short, 1, "one cloth short")
+b = build({ [1] = 3 }, false)
+eq(b.cost, 700, "full price view: cost is every material")
+eq(b.margin, 300, "margin at full materials price")
+b = build({ [1] = 40, [11] = 5 }, true)
+eq(b.cost, 0, "everything held: nothing to buy")
+eq(b.margin, 1000, "the whole price is margin")
+local two = Cat.Build({
+	{ id = 1, name = "Dear", category = "Bags", learned = true, output = 10, reagents = { { itemID = 1, qty = 4 } } },
+	{ id = 2, name = "Cheap", category = "Bags", learned = true, output = 10, reagents = { { itemID = 11, qty = 1 } } },
+}, "Tailoring", function(i) return cost[i] or 0 end, {}, {}, function(i) return i == 1 and 4 or 0 end, nil, true)
+eq(Cat.Sort(two, "mats cost")[1].name, "Dear", "sorting by cost puts what you can make from held mats first")
 eq(prows[2].canMake, 0, "one missing material means none can be made")
 eq(prows[3].canMake, 0, "a recipe with no materials listed is not counted as craftable")
 eq(#Cat.Filter(prows, { craftableOnly = true }), 1, "craftable now")

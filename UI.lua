@@ -992,6 +992,11 @@ AddTab("Products", function(p, tab)
 		end)
 		sourceChecks[src] = cb
 	end
+	local heldFree = At(Check(p, "Mats I hold cost nothing"), p, 404, -24)
+	heldFree:SetScript("OnClick", function(self)
+		DB.settings.heldFree = self:GetChecked() and true or false
+		tab.Refresh()
+	end)
 	local detail = At(Label(p, "", "GameFontHighlightSmall", 770), p, 4, -338)
 	local current
 
@@ -1006,7 +1011,7 @@ AddTab("Products", function(p, tab)
 		ns.Changed()
 	end), p, 0, -446)
 	At(Button(p, "Refresh prices", 120, function() Price.Reset(); tab.Refresh() end), p, 196, -446)
-	local count = At(Label(p, "", "GameFontDisableSmall", 370), p, 404, -29)
+	local count = At(Label(p, "", "GameFontDisableSmall", 180), p, 600, -29)
 	local shownRows, loadedFor = {}, nil
 
 	-- Your own asking price for the selected recipe, and quick replies built from it.
@@ -1110,7 +1115,9 @@ AddTab("Products", function(p, tab)
 		local countOf
 		countOf, partsOf = ns.Inventory.Counter(held, enabled, inBags, inBank)
 		local rows = ns.Catalog.Build(src[prof.value].list, prof.value, function(id) return (Price.GetByID(id)) end,
-			M.SoldCounts(), DB.R.products, countOf, Price.BagSlots)
+			M.SoldCounts(), DB.R.products, countOf, Price.BagSlots, DB.settings.heldFree)
+		heldFree:SetChecked(DB.settings.heldFree and true or false)
+		local costWord = DB.settings.heldFree and "to buy" or "mats"
 		cat:SetList(ns.Catalog.Categories(rows))
 		local filtered = ns.Catalog.Filter(rows, {
 			category = cat.value, learnedOnly = learned:GetChecked(), craftableOnly = craftable:GetChecked(),
@@ -1122,11 +1129,11 @@ AddTab("Products", function(p, tab)
 			if r.header then return "|cffffd100" .. r.name .. "|r  |cff888888(" .. r.count .. ")|r", "" end
 			return "   " .. (r.product and "|cffffd100*|r " or "") .. r.name .. (r.slots and ("  |cff80c0ff" .. r.slots .. " slot|r") or "")
 					.. (r.learned and "" or "  |cff888888not learned|r"),
-				(r.canMake > 0 and ("|cff40ff40can make " .. r.canMake .. "|r    ") or "") .. ("mats %s    AH %s%s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
+				(r.canMake > 0 and ("|cff40ff40can make " .. r.canMake .. "|r    ") or "") .. ("%s %s    AH %s%s    margin %s    sold %d"):format(costWord, (r.cost == 0 and r.mats > 0) and "0" or money(r.cost), money(r.sale),
 					r.myPrice and ("    |cffffd100yours " .. U.FormatMoney(r.myPrice) .. "|r") or "",
 					r.price > 0 and ((r.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(r.margin))) or "?", r.sold)
 		end, sel)
-		count:SetText(("%d of %d recipes. * = your products. Margin uses your price when set."):format(#filtered, #rows))
+		count:SetText(("%d of %d recipes   * = my products"):format(#filtered, #rows))
 
 		for _, r in ipairs(shown) do if not r.header and r.id == sel then current = r end end
 		if loadedFor ~= sel then
@@ -1150,14 +1157,17 @@ AddTab("Products", function(p, tab)
 		end
 		local makers = craftedBy()
 		for _, g in ipairs(current.reagents) do
-			L[#L + 1] = ("   %dx %s    |cff%s(have %d: %s)|r    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID),
-				g.have >= g.qty and "40ff40" or "ff6060", g.have, partsOf(g.itemID), money(g.each), money(g.each * g.qty),
+			L[#L + 1] = ("   %dx %s    |cff%s(have %d: %s)|r    %s each    %s%s"):format(g.qty, Price.ItemName(g.itemID),
+				g.have >= g.qty and "40ff40" or "ff6060", g.have, partsOf(g.itemID), money(g.each),
+				g.short == 0 and "|cff40ff40nothing to buy|r" or ("buy " .. g.short .. " = " .. money(g.each * g.short)),
 				makers[g.itemID] and ("    |cffffd100made by " .. makers[g.itemID] .. "|r") or "")
 		end
-		L[#L + 1] = ("Materials %s%s    Auction price %s    Your price %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),
-			current.unpriced > 0 and (" (" .. current.unpriced .. " without a price)") or "", money(current.sale),
+		L[#L + 1] = ("All mats at today's price %s%s    |cffffd100Still to buy %s|r    Auction price %s    Your price %s    Margin %s (%s)    Sold: %d"):format(money(current.mats),
+			current.unpriced > 0 and (" (" .. current.unpriced .. " without a price)") or "",
+			current.buy == 0 and (current.unpricedBuy > 0 and "?" or "nothing") or U.FormatMoney(current.buy), money(current.sale),
 			current.myPrice and U.FormatMoney(current.myPrice) or "not set",
-			current.price > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?", current.sold)
+			current.price > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?",
+			DB.settings.heldFree and "after what you hold" or "at full mats price", current.sold)
 		detail:SetText(table.concat(L, "\n"))
 	end
 end)

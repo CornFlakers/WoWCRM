@@ -20,7 +20,8 @@ end
 -- countOf(itemID) -> how many are in the player's bags right now (optional)
 -- slotsOf(itemID) -> number of slots when the item is a bag (optional)
 -- A product's own asking price, when set, is used for the margin instead of the auction price.
-function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsOf)
+-- heldFree: materials you already hold cost nothing, so a craft costs only what you still have to buy.
+function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsOf, heldFree)
 	local rows = {}
 	for _, r in ipairs(recipes or {}) do
 		if type(r) == "table" and r.name then
@@ -29,7 +30,7 @@ function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsO
 				category = (r.category and r.category ~= "") and r.category or "Other",
 				learned = r.learned and true or false,
 				output = r.output, outputQty = tonumber(r.outputQty) or 1,
-				reagents = {}, mats = 0, unpriced = 0,
+				reagents = {}, mats = 0, unpriced = 0, buy = 0, unpricedBuy = 0,
 			}
 			local canMake
 			for _, g in ipairs(r.reagents or {}) do
@@ -38,8 +39,15 @@ function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsO
 				local have = countOf and (tonumber(countOf(g.itemID)) or 0) or 0
 				local times = math.floor(have / qty)
 				if not canMake or times < canMake then canMake = times end
-				row.reagents[#row.reagents + 1] = { itemID = g.itemID, qty = qty, each = each, have = have }
-				if each > 0 then row.mats = row.mats + each * qty else row.unpriced = row.unpriced + 1 end
+				local short = math.max(0, qty - have) -- how many of this material one craft still needs bought
+				row.reagents[#row.reagents + 1] = { itemID = g.itemID, qty = qty, each = each, have = have, short = short }
+				if each > 0 then
+					row.mats = row.mats + each * qty
+					row.buy = row.buy + each * short
+				else
+					row.unpriced = row.unpriced + 1
+					if short > 0 then row.unpricedBuy = row.unpricedBuy + 1 end
+				end
 			end
 			-- How many crafts the materials in your bags cover right now (the scarcest material decides).
 			row.canMake = canMake or 0
@@ -48,7 +56,9 @@ function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsO
 			row.product = mine and true or false
 			row.myPrice = type(mine) == "table" and tonumber(mine.price) or nil
 			row.price = row.myPrice or row.sale -- what a customer would be quoted
-			row.margin = row.price > 0 and (row.price - row.mats) or 0
+			-- mats = every material at today's price; buy = only what you do not already hold.
+			row.cost = heldFree and row.buy or row.mats
+			row.margin = row.price > 0 and (row.price - row.cost) or 0
 			row.sold = (sold and sold[r.name]) or 0
 			if slotsOf and row.output and isBag(row.category) then row.slots = tonumber(slotsOf(row.output)) end
 			rows[#rows + 1] = row
@@ -95,7 +105,7 @@ function Cat.Sort(rows, by)
 			x, y = a.slots or 0, b.slots or 0
 			if x ~= y then return x > y end
 		elseif by == "mats cost" then
-			if a.mats ~= b.mats then return a.mats < b.mats end
+			if a.cost ~= b.cost then return a.cost < b.cost end
 		elseif by == "sale value" then
 			if a.sale ~= b.sale then return a.sale > b.sale end
 		elseif by == "margin" then

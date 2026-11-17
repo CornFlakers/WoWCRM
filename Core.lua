@@ -65,6 +65,40 @@ StaticPopupDialogs["WOWCRM_TRADE"] = {
 	preferredIndex = 3,
 }
 
+-- Posts from before posts had owners: offer them to the character logging in. Saying no on a
+-- character means it is not asked again there.
+StaticPopupDialogs["WOWCRM_ASSIGN"] = {
+	text = "%s",
+	button1 = YES,
+	button2 = NO,
+	OnAccept = function(_, data) if data and data.yes then data.yes() end end,
+	OnCancel = function(_, data) if data and data.no then data.no() end end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+function ns.OfferAssignPosts(force)
+	local n = M.UnassignedPosts()
+	if n == 0 or not M.me then return end
+	DB.R.assignDeclined = DB.R.assignDeclined or {}
+	if DB.R.assignDeclined[M.me] and not force then return end
+	local who = U.Display(M.me, DB.realm)
+	StaticPopup_Show("WOWCRM_ASSIGN", ("WoW CRM\n\nPosts now belong to the character whose voice they are written in.\n\nYou have %d post%s not given to anyone yet. Are they written as |cffffff00%s|r?\n\nChoose No on any other character."):format(
+		n, n == 1 and "" or "s", who), nil, {
+		yes = function()
+			M.AssignPosts(M.me)
+			ns.Print(("%d post%s now belong to %s."):format(n, n == 1 and "" or "s", who))
+			ns.Changed()
+		end,
+		no = function()
+			DB.R.assignDeclined[M.me] = true
+			ns.Print("not asked again on this character. You can still give posts to it on the Posts tab.")
+		end,
+	})
+end
+
 -- ---------------------------------------------------------------- saving
 -- The game writes add-on data to disk when the interface shuts down: logging out, leaving
 -- the game or reloading. A normal logout therefore saves everything. The only way to lose
@@ -163,6 +197,7 @@ ns.On("PLAYER_LOGIN", function()
 	local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName() or "Unknown"):gsub("[%s%-]", "")
 	WoWCRMDB = DB.Init(WoWCRMDB, realm)
 	ns.ready = true
+	M.me = U.NormName(ns.MyName(), DB.realm)
 	local names, items = M.RepairSplitNames(), M.RepairJoinedItems()
 	M.RefreshStatuses()
 	if names + items > 0 then
@@ -172,6 +207,7 @@ ns.On("PLAYER_LOGIN", function()
 	end
 	local on = M.TrackingState(U.Now())
 	if on then ns.Print("contact tracking is still ON.") end
+	ns.OfferAssignPosts()
 	ns.Notify()
 end)
 

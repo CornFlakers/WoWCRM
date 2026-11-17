@@ -13,6 +13,7 @@ local function eq(got, want, what)
 	end
 end
 -- The pause between any two public posts is switched off here; it has its own tests below.
+M.me = "Me-Stormrage"
 local function fresh() DB.Init({}, "Stormrage"); M.cursor = {}; DB.settings.publicSpacing = 0 end
 local ALL = function() return true end
 
@@ -617,6 +618,41 @@ local ps = M.PurchaseSummary("Brin Ashby-Stormrage")
 eq(ps.done, 1, "one finished order")
 eq(ps.value, 10000, "what they have paid")
 eq(M.PurchaseSummary("Zed Ward-Faraway").orders, 0, "someone who has bought nothing")
+
+-- posts belong to the character whose voice they are written in
+fresh()
+local mine = M.SavePost(nil, "Mine", "mine", { TRADE = true })
+eq(mine.owner, "Me-Stormrage", "a new post belongs to the character writing it")
+local shared = M.SavePost(nil, "Shared", "shared", { TRADE = true }, M.ANY)
+local main = M.SavePost(nil, "Main", "main", { TRADE = true }, "Main Char-Stormrage")
+local old = M.SavePost(nil, "Old", "old", { TRADE = true })
+old.owner = nil -- written before posts had owners
+eq(M.CanPost(mine), true, "own post")
+eq(M.CanPost(shared), true, "a post for any character")
+eq(M.CanPost(main), false, "another character's post")
+eq(M.CanPost(old), false, "a post given to nobody yet")
+eq(#M.PostsFor(), 2, "only own and shared posts are offered")
+eq(#M.CyclePosts(), 2, "the cycle uses only own and shared posts")
+eq(M.OwnerProblem(main):find("Main Char", 1, true) ~= nil, true, "says whose post it is")
+eq(M.OwnerProblem(mine), nil, "no problem with your own post")
+eq(M.SavePost(main.id, "Main", "main edited", { TRADE = true }).owner, "Main Char-Stormrage", "editing keeps the owner")
+local oc = M.StartCampaign("Mixed", { mine.id, main.id, shared.id }, 30, 5, T)
+eq(#oc.posts, 2, "a campaign leaves out other characters' posts")
+eq(oc.character, "Me-Stormrage", "the campaign records who ran it")
+M.EndCampaign(T)
+eq(M.UnassignedPosts(), 1, "one post given to nobody")
+eq(M.AssignPosts("Me-Stormrage"), 1, "given to this character")
+eq(M.CanPost(old), true, "and now postable")
+M.me = "Alt-Stormrage"
+eq(#M.PostsFor(), 1, "on another character, only the shared post is offered")
+M.me = "Me-Stormrage"
+local dumpOwners = M.Export()
+DB.Init({}, "OwnerCopy")
+M.Import(dumpOwners, T)
+local owners = {}
+for _, ip in ipairs(DB.R.posts) do owners[ip.name] = ip.owner end
+eq(owners.Main, "Main Char-Stormrage", "owner survives export and import")
+eq(owners.Shared, M.ANY, "shared survives export and import")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

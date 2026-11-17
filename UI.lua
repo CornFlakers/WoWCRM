@@ -197,11 +197,36 @@ end
 
 AddTab("Posts", function(p, tab)
 	local sel
-	local list = At(List(p, 250, 372, function(item) tab.Select(item.id) end), p, 0, 0)
+	local list = At(List(p, 250, 340, function(item) tab.Select(item.id) end), p, 0, 0)
 	local X = 264
+	local ownerSel
+
+	local function ownerText(key)
+		if key == M.ANY then return "any character" end
+		if key == nil then return "nobody yet" end
+		return U.Display(key, DB.realm)
+	end
 
 	At(Label(p, "Name"), p, X, -4)
-	local name = At(Edit(p, 300), p, X + 70, 0)
+	local name = At(Edit(p, 200), p, X + 70, 0)
+	-- Who posts this: the character whose voice it is written in, or any character.
+	local ownerBtn = At(Button(p, "", 210), p, X + 280, 1)
+	ownerBtn:SetScript("OnClick", function()
+		local post = sel and M.GetPost(sel)
+		local options = {}
+		if post and post.owner and post.owner ~= M.ANY and post.owner ~= M.me then options[#options + 1] = post.owner end
+		options[#options + 1] = M.me
+		options[#options + 1] = M.ANY
+		local i = U.Contains(options, ownerSel) or 0
+		ownerSel = options[i % #options + 1]
+		ownerBtn:SetText("Posted by: " .. U.Shorten(ownerText(ownerSel), 20))
+		UI.Msg("Press Save post to keep who posts it.")
+	end)
+	local assign = At(Button(p, "", 250, function()
+		local n = M.AssignPosts(M.me)
+		UI.Msg(("%d post%s now belong to %s."):format(n, n == 1 and "" or "s", ownerText(M.me)))
+		ns.Changed()
+	end), p, 0, -346)
 	At(Label(p, "Message"), p, X, -30)
 	local counter = At(Label(p, "", "GameFontHighlightSmall"), p, X + 70, -31)
 	local text = At(MultiEdit(p, 500, 84), p, X, -48)
@@ -231,6 +256,8 @@ AddTab("Posts", function(p, tab)
 
 	local function load(post)
 		sel = post and post.id or nil
+		ownerSel = post and post.owner or (not post and M.me) or nil
+		ownerBtn:SetText("Posted by: " .. U.Shorten(ownerText(ownerSel), 20))
 		SetEdit(name, post and post.name)
 		text.edit:SetText(post and post.text or "")
 		for _, t in ipairs(ns.TARGETS) do checks[t]:SetChecked(post and post.targets[t] and true or false) end
@@ -240,7 +267,7 @@ AddTab("Posts", function(p, tab)
 	At(Button(p, "Save post", 100, function()
 		local targets = {}
 		for _, t in ipairs(ns.TARGETS) do targets[t] = checks[t]:GetChecked() and true or false end
-		local post, err = M.SavePost(sel, name:GetText(), text.edit:GetText(), targets)
+		local post, err = M.SavePost(sel, name:GetText(), text.edit:GetText(), targets, ownerSel)
 		if not post then UI.Msg(err, true) return end
 		sel = post.id
 		UI.Msg("Post saved.")
@@ -322,6 +349,15 @@ AddTab("Posts", function(p, tab)
 			hint:SetText("Select or save a post.")
 			return
 		end
+		local problem = M.OwnerProblem(post)
+		if problem then
+			for _, t in ipairs(ns.TARGETS) do targetBtns[t]:Disable() end
+			replyBtn:Disable()
+			nextBtn:SetText("Post next")
+			nextBtn:Disable()
+			hint:SetText(problem)
+			return
+		end
 		local target, why = M.NextTarget(post, Chat.Available, now)
 		if target then
 			nextBtn:SetText("Post to " .. ns.TARGET_LABEL[target])
@@ -353,10 +389,20 @@ AddTab("Posts", function(p, tab)
 	function tab.Refresh()
 		if sel and not M.GetPost(sel) then load(nil) end
 		list:Set(DB.R.posts, function(post)
-			local n = 0
-			for _ in pairs(post.targets) do n = n + 1 end
-			return post.name, n .. " ch"
+			local who
+			if post.owner == M.me then who = "mine"
+			elseif post.owner == M.ANY then who = "any"
+			elseif post.owner == nil then who = "|cffff9060not given|r"
+			else who = "|cff888888" .. U.Shorten((U.SplitKey(post.owner)), 12) .. "|r" end
+			return (M.CanPost(post) and "" or "|cff888888") .. post.name, who
 		end, sel)
+		local unassigned = M.UnassignedPosts()
+		if unassigned > 0 then
+			assign:SetText(("Give %d unassigned post%s to me"):format(unassigned, unassigned == 1 and "" or "s"))
+			assign:Show()
+		else
+			assign:Hide()
+		end
 		updateButtons()
 	end
 	load(nil)
@@ -881,6 +927,7 @@ local function campaignText(rep, now)
 	local L = {}
 	if c.status == "running" and now < c.ends then
 		L[#L + 1] = ("|cffffd100%s|r  -  |cff40ff40running|r, %s left, posts at least %d min apart per channel"):format(c.name, M.Clock(c.ends - now), c.interval)
+		if c.character then L[#L] = L[#L] .. ", posted by " .. U.Display(c.character, DB.realm) end
 	else
 		L[#L + 1] = ("|cffffd100%s|r  -  ran %s to %s"):format(c.name, When(c.started), When(c.endedAt or c.ends))
 	end
@@ -919,7 +966,7 @@ AddTab("Campaigns", function(p, tab)
 
 	local start = At(Button(p, "Start campaign", 140, function()
 		local ids = {}
-		for _, post in ipairs(DB.R.posts) do
+		for _, post in ipairs(M.PostsFor()) do
 			if chosen[post.id] then ids[#ids + 1] = post.id end
 		end
 		local c, err = M.StartCampaign(name:GetText(), ids, minutes:GetText(), wait:GetText(), U.Now())
@@ -945,7 +992,7 @@ AddTab("Campaigns", function(p, tab)
 			SetEdit(wait, tostring(DB.settings.postInterval))
 		end
 		-- Posts are ticked by default, including ones written after this tab was first opened.
-		for _, post in ipairs(DB.R.posts) do
+		for _, post in ipairs(M.PostsFor()) do
 			if not known[post.id] then known[post.id] = true; chosen[post.id] = true end
 		end
 		local active = M.ActiveCampaign(now)
@@ -954,7 +1001,7 @@ AddTab("Campaigns", function(p, tab)
 		list:Set(items, function(c)
 			return c.name, (active and c.id == active.id) and "|cff40ff40running|r" or When(c.started)
 		end, sel or (active and active.id))
-		postList:Set(DB.R.posts, function(post)
+		postList:Set(M.PostsFor(), function(post)
 			return (chosen[post.id] and "|cff40ff40[x]|r  " or "[  ]  ") .. post.name, U.Shorten(post.text, 40)
 		end)
 		if active then start:Disable(); stop:Enable() else start:Enable(); stop:Disable() end
@@ -962,7 +1009,7 @@ AddTab("Campaigns", function(p, tab)
 		local rep = M.CampaignReport(sel or (active and active.id))
 		if rep then
 			report:SetText(campaignText(rep, now))
-		elseif #DB.R.posts == 0 then
+		elseif #M.PostsFor() == 0 then
 			report:SetText("Write a post on the Posts tab first. A campaign is a selling session built from your posts.")
 		else
 			report:SetText("A campaign is a selling session.\n\n1. Tick the posts to use, set how long to run and how long to wait between posts.\n2. Press Start campaign. Contact tracking switches on.\n3. A small campaign bar tells you when the next post is due. One click sends it.\n\nThe add-on never posts on its own: the game only allows posts that come from your click.\nWhispers, orders and income are then counted against the post that brought them.")
@@ -1635,7 +1682,9 @@ local BAR_TOP = 124 -- where the single-post buttons start
 
 local function refreshBar()
 	if not bar or not bar:IsShown() then return end
-	local posts, now = DB.R.posts, U.Now()
+	local posts, now = M.PostsFor(), U.Now()
+
+	bar.title:SetText("WoW CRM posts for " .. U.Shorten((U.SplitKey(M.me or "")), 18))
 
 	-- The one-button cycle.
 	local chans = DB.settings.cycleChannels
@@ -1667,7 +1716,7 @@ local function refreshBar()
 			b:Hide()
 		end
 	end
-	bar.empty:SetText(shown == 0 and "No posts yet. /crm to write one." or "")
+	bar.empty:SetText(shown == 0 and "No posts for this character yet. Write one on the Posts tab, or set a post to any character." or "")
 	bar:SetHeight(BAR_TOP + 10 + math.max(1, shown) * 24)
 end
 
@@ -1685,7 +1734,7 @@ local function buildBar()
 		local point, _, rel, x, y = self:GetPoint()
 		DB.settings.barPos = { point, rel, x, y }
 	end)
-	At(Label(bar, "WoW CRM posts", "GameFontNormalSmall"), bar, 10, -8)
+	bar.title = At(Label(bar, "WoW CRM posts", "GameFontNormalSmall", 230), bar, 10, -8)
 	local close = CreateFrame("Button", nil, bar, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT", 2, 2)
 	close:SetScript("OnClick", function() UI.ToggleBar() end)

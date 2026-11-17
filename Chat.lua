@@ -56,6 +56,8 @@ end
 
 -- Sends one message to one channel. MUST be called directly from a click or key press.
 function Chat.Send(post, target)
+	local problem = M.OwnerProblem(post)
+	if problem then return false, problem end
 	local ok, why, channelId = Chat.Available(target)
 	if not ok then return false, ns.TARGET_LABEL[target] .. ": " .. why end
 	local now = U.Now()
@@ -87,6 +89,8 @@ end
 -- Whispers a saved post to one player. This is a private message, so it is not counted as a
 -- post, has no waiting time, and does not move the post's channel rotation.
 function Chat.WhisperPost(post, who)
+	local problem = M.OwnerProblem(post)
+	if problem then return false, problem end
 	who = U.Trim(who)
 	if who == "" then return false, "Type who to whisper." end
 	local contact = M.FindContact(who)

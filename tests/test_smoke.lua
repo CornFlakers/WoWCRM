@@ -180,6 +180,7 @@ fire("PLAYER_LOGIN")
 eq(ns.ready, true, "ready after login")
 eq(DB.settings.publicSpacing, 2, "two minutes between public posts by default")
 eq(ns.MyName(), "Seller", "own name")
+eq(M.me, "Seller-Stormrage", "who is playing")
 DB.settings.publicSpacing = 0 -- the steps below post back to back; the pause has its own steps near the end
 eq(type(WoWCRMDB), "table", "saved table created")
 eq(WoWCRMSaveButton._shown, false, "save button hidden with nothing to save")
@@ -272,6 +273,21 @@ eq(find("Say", posts)._enabled, false, "say button greyed during its gap")
 clock = clock + 61
 tick(posts)
 eq(find("Post to Say", posts) ~= nil, true, "say available again after the gap")
+
+-- posts belong to a character
+eq(DB.R.posts[1].owner, "Seller-Stormrage", "a post written here belongs to this character")
+local alien = M.SavePost(nil, "Main's post", "WTS from the main", { SAY = true }, "Main Char-Stormrage")
+local alienSent = #sent
+local ok, why = ns.Chat.Send(alien, "SAY")
+eq(ok, false, "another character's post is never sent")
+eq(why:find("Main Char", 1, true) ~= nil, true, "and it says whose post it is")
+eq(#sent, alienSent, "nothing went to chat")
+local legacy = M.SavePost(nil, "Old post", "from before owners", { SAY = true })
+legacy.owner = nil
+ns.OfferAssignPosts()
+eq(legacy.owner, "Seller-Stormrage", "posts with no owner are offered to the character logging in")
+M.DeletePost(alien.id); M.DeletePost(legacy.id)
+UI.Show("Posts")
 
 -- whisper a post to someone
 local pe2 = kind("EditBox", posts) -- name, message, whisper to

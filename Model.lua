@@ -25,7 +25,51 @@ end
 
 function M.GetPost(id) return findById(R().posts, id) end
 
-function M.SavePost(id, name, text, targets)
+-- ---------------------------------------------------------------- who posts what
+-- Posts are written in one character's voice, so each belongs to a character (its key) or to
+-- "*" (any character may post it). A post with no owner yet is not posted by anyone until it is
+-- given one. M.me is the character playing now; it is set at login.
+
+M.ANY = "*"
+
+function M.CanPost(post)
+	return post ~= nil and post.owner ~= nil and (post.owner == M.ANY or post.owner == M.me)
+end
+
+-- The posts this character may send, in list order.
+function M.PostsFor()
+	local out = {}
+	for _, p in ipairs(R().posts) do
+		if M.CanPost(p) then out[#out + 1] = p end
+	end
+	return out
+end
+
+function M.UnassignedPosts()
+	local n = 0
+	for _, p in ipairs(R().posts) do if p.owner == nil then n = n + 1 end end
+	return n
+end
+
+function M.AssignPosts(owner)
+	local n = 0
+	for _, p in ipairs(R().posts) do
+		if p.owner == nil then p.owner = owner; n = n + 1 end
+	end
+	return n
+end
+
+-- Why this character cannot send this post, in words; nil when it can.
+function M.OwnerProblem(post)
+	if M.CanPost(post) then return nil end
+	if not post or post.owner == nil then
+		return "This post is not given to a character yet. Choose who posts it on the Posts tab."
+	end
+	return "This post is written for " .. U.Display(post.owner, DB.realm) .. ". Log in as them, or set it to any character on the Posts tab."
+end
+
+-- owner: a character key or M.ANY. Left out, a new post belongs to the character writing it.
+function M.SavePost(id, name, text, targets, owner)
 	name, text = U.Trim(name), U.Trim(text)
 	if name == "" then return nil, "Give the post a name." end
 	if text == "" then return nil, "The message is empty." end
@@ -40,10 +84,11 @@ function M.SavePost(id, name, text, targets)
 
 	local post = id and M.GetPost(id)
 	if not post then
-		post = { id = M.NewId(), created = U.Now() }
+		post = { id = M.NewId(), created = U.Now(), owner = M.me }
 		table.insert(R().posts, post)
 	end
 	post.name, post.text, post.targets = name, text, t
+	if owner ~= nil then post.owner = owner end
 	return post
 end
 
@@ -105,7 +150,7 @@ function M.RecordSend(post, target, now, zone)
 	M.cursor[post.id] = U.Contains(ns.TARGETS, target) or 0
 	r.lastPost = { id = post.id, time = now, campaign = cid }
 	local log = r.postLog
-	log[#log + 1] = { post = post.id, target = target, time = now, zone = zone, campaign = cid }
+	log[#log + 1] = { post = post.id, target = target, time = now, zone = zone, campaign = cid, character = M.me }
 	while #log > 500 do table.remove(log, 1) end
 	local hour = U.Hour(now)
 	r.sendHours[hour] = (r.sendHours[hour] or 0) + 1
@@ -127,7 +172,7 @@ function M.CyclePosts()
 	local out = {}
 	for _, p in ipairs(R().posts) do
 		local t = p.targets
-		if t.SAY or t.YELL or t.GENERAL or t.TRADE then out[#out + 1] = p end
+		if M.CanPost(p) and (t.SAY or t.YELL or t.GENERAL or t.TRADE) then out[#out + 1] = p end
 	end
 	return out
 end
@@ -757,7 +802,7 @@ function M.StartCampaign(name, postIds, minutes, interval, now)
 	if interval < 1 then return nil, "The wait between posts must be at least 1 minute." end
 	local posts = {}
 	for _, id in ipairs(postIds or {}) do
-		if M.GetPost(id) then posts[#posts + 1] = id end
+		if M.CanPost(M.GetPost(id)) then posts[#posts + 1] = id end
 	end
 	if #posts == 0 then return nil, "Pick at least one post for the campaign." end
 	name = U.Trim(name)
@@ -766,7 +811,7 @@ function M.StartCampaign(name, postIds, minutes, interval, now)
 	M.EndCampaign(now)
 	local c = {
 		id = M.NewId(), name = name, started = now, ends = now + minutes * 60, minutes = minutes,
-		interval = interval, posts = posts, turn = 1, status = "running", sendsByPost = {},
+		interval = interval, posts = posts, turn = 1, status = "running", sendsByPost = {}, character = M.me,
 	}
 	table.insert(R().campaigns, c)
 	R().activeCampaign = c.id
@@ -780,7 +825,7 @@ function M.CampaignNext(c, avail, now)
 	for i = 0, n - 1 do
 		local idx = ((c.turn - 1 + i) % n) + 1
 		local post = M.GetPost(c.posts[idx])
-		if post then
+		if M.CanPost(post) then
 			local target = M.NextTarget(post, avail, now)
 			if target then return post, target, 0 end
 			for _, t in ipairs(ns.TARGETS) do
@@ -963,7 +1008,7 @@ function M.Export()
 	for _, p in ipairs(r.posts) do
 		local t = {}
 		for _, k in ipairs(ns.TARGETS) do if p.targets[k] then t[#t + 1] = k end end
-		line("P", p.name, p.text, table.concat(t, ","))
+		line("P", p.name, p.text, table.concat(t, ","), p.owner)
 	end
 	local keys = {}
 	for k in pairs(r.contacts) do keys[#keys + 1] = k end
@@ -1017,7 +1062,7 @@ function M.Import(text, now)
 		if kind == "P" and f[2] and not postByName[f[2]] then
 			local targets = {}
 			for k in (f[4] or ""):gmatch("[^,]+") do targets[k] = true end
-			local p = M.SavePost(nil, f[2], f[3], targets)
+			local p = M.SavePost(nil, f[2], f[3], targets, (f[5] and f[5] ~= "") and f[5] or nil)
 			if p then postByName[p.name] = p; added.posts = added.posts + 1 end
 		elseif kind == "C" and f[2] and f[2] ~= "" then
 			local c, isNew = M.EnsureContact(f[2], tonumber(f[6]) or now)

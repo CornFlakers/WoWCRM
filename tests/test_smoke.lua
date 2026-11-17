@@ -83,7 +83,13 @@ end
 function ChatEdit_InsertLink() return false end
 ChatFrameUtil = { InsertLink = function() return false end }
 local tradeLink
-C_TradeSkillUI = { GetTradeSkillListLink = function() return tradeLink end }
+local sourceReady = false
+C_TradeSkillUI = {
+	GetTradeSkillListLink = function() return tradeLink end,
+	GetRecipeSourceText = function(id) if sourceReady and id == 2 then return "Vendor: |cffffffffBorya|r\nOrgrimmar" end end,
+}
+local mcOpened = 0
+function Mastercraft_Toggle() mcOpened = mcOpened + 1 end
 function GetTime() return clock end
 local tells = {}
 function ChatFrame_SendTell(name) tells[#tells + 1] = name end
@@ -468,6 +474,19 @@ eq(opened[#opened], "/r Runecloth Bag (14 slot) 2g", "quote placed in chat as a 
 click("Quote list", prod)
 eq(opened[#opened]:find("Runecloth Bag (14 slot) 2g", 1, true) ~= nil, true, "price list placed in chat as a reply")
 row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
+local function detailHas(text)
+	for _, w in ipairs(widgets) do if w._kind == "FontString" and w._text:find(text, 1, true) then return true end end
+	return false
+end
+eq(detailHas("How to get this pattern:|r not known yet"), true, "unlearned recipe says the source is not known yet")
+sourceReady = true -- the profession window is now open, so the game answers
+row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
+eq(detailHas("How to get this pattern:|r Vendor: Borya / Orgrimmar"), true, "source shown once the game provides it")
+sourceReady = false
+row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
+eq(detailHas("Vendor: Borya / Orgrimmar"), true, "source is remembered after the window closes")
+click("Mastercraft", prod)
+eq(mcOpened, 1, "Mastercraft button opens Mastercraft")
 local flagged = false
 for _, w in ipairs(widgets) do if w._kind == "FontString" and w._text:find("made by Alchemy", 1, true) then flagged = true end end
 eq(flagged, true, "material made by another profession is flagged")

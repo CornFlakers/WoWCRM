@@ -990,6 +990,13 @@ AddTab("Products", function(p, tab)
 		Chat.Reply(text)
 		UI.Msg("Quote placed in the chat box as a reply to your last whisper. Press Enter to send.")
 	end), p, 516, -446)
+	At(Button(p, "Mastercraft", 96, function()
+		local toggle = rawget(_G, "Mastercraft_Toggle")
+		if type(toggle) ~= "function" then UI.Msg("Mastercraft is not installed or not enabled.", true) return end
+		toggle()
+		UI.Msg(current and ("In Mastercraft open Codex > Recipes and find " .. current.name .. "; its pin button sets the waypoint.")
+			or "In Mastercraft open Codex > Recipes; a recipe's pin button sets the waypoint.")
+	end), p, 680, -446)
 	At(Button(p, "Quote list", 90, function()
 		local text, n = ns.Catalog.QuoteList(shownRows, ns.MAX_CHAT_BYTES - 3)
 		if n == 0 then UI.Msg("Nothing in this list has a price yet.", true) return end
@@ -1080,6 +1087,11 @@ AddTab("Products", function(p, tab)
 		local L = { ("|cffffd100%s|r  -  %s, %s%s    %s"):format(current.name, current.category, current.learned and "learned" or "not learned",
 			current.outputQty > 1 and (", makes " .. current.outputQty) or "",
 			current.canMake > 0 and ("|cff40ff40Materials in your bags for " .. current.canMake .. "|r") or "You do not have all the materials in your bags") }
+		if not current.learned then
+			local how = type(current.id) == "number" and Price.RecipeSource(current.id)
+			L[#L + 1] = how and ("|cffffd100How to get this pattern:|r " .. how)
+				or "|cffffd100How to get this pattern:|r not known yet. Open your profession window, then click this recipe again."
+		end
 		local makers = craftedBy()
 		for _, g in ipairs(current.reagents) do
 			L[#L + 1] = ("   %dx %s    |cff%s(have %d)|r    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID),

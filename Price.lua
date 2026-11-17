@@ -139,3 +139,20 @@ function Price.ItemLink(itemID)
 end
 
 function Price.ResetSlots() slotCache = {} end
+
+-- ---------------------------------------------------------------- where a recipe comes from
+-- The game can say how an unlearned recipe is obtained ("Vendor: ...", "Drop: ..."), usually
+-- only while that profession's window is open. What it says is remembered, so it is there next time.
+
+function Price.RecipeSource(recipeID)
+	local known = ns.DB.R.recipeSources
+	local get = C_TradeSkillUI and C_TradeSkillUI.GetRecipeSourceText
+	if get and recipeID then
+		local ok, text = pcall(get, recipeID)
+		if ok and type(text) == "string" and text:find("%S") then
+			text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("%s*[\r\n]+%s*", " / ")
+			if known[recipeID] ~= text then known[recipeID] = text end
+		end
+	end
+	return known[recipeID]
+end

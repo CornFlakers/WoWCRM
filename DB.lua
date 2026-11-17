@@ -60,6 +60,7 @@ function DB.Init(saved, realm)
 	R.contacts = R.contacts or {}
 	R.lastSent = R.lastSent or {}
 	R.products = R.products or {}
+	R.recipeSources = R.recipeSources or {}
 	R.sendHours = R.sendHours or {}
 	R.tracking = R.tracking or { on = false }
 	R.nextId = R.nextId or 1

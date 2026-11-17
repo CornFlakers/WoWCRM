@@ -213,7 +213,7 @@ AddTab("Posts", function(p, tab)
 	end
 
 	local function updateCounter()
-		local n = U.ByteLen(U.Fill(text.edit:GetText(), { me = UnitName("player") or "", zone = GetZoneText() or "" }))
+		local n = U.ByteLen(U.Fill(text.edit:GetText(), { me = ns.MyName() or "", zone = GetZoneText() or "" }))
 		counter:SetText(("%d / %d bytes"):format(n, ns.MAX_CHAT_BYTES))
 		if n > ns.MAX_CHAT_BYTES then counter:SetTextColor(1, 0.3, 0.3) else counter:SetTextColor(1, 1, 1) end
 	end
@@ -445,9 +445,9 @@ AddTab("Contacts", function(p, tab)
 		tab.Select(key)
 	end), p, 132, 1)
 	At(Button(p, "Target", 62, function()
-		local n, r = UnitName("target")
+		local n, second = UnitName("target")
 		if not n or not UnitIsPlayer("target") then UI.Msg("Target a player first.", true) return end
-		local key = U.NormName((r and r ~= "") and (n .. "-" .. r) or n, DB.realm)
+		local key = M.JoinName(n, second)
 		local _, isNew = M.EnsureContact(key, U.Now())
 		if isNew then ns.Changed() end
 		tab.Select(key)
@@ -804,8 +804,8 @@ AddTab("Mail", function(p, tab)
 		UI.Msg(ok and "Letter filled in. Check it, attach anything you need, then press Send in the mail window." or err, not ok)
 	end), p, X + 290, -291)
 	local hint = At(Label(p, "", "GameFontHighlightSmall", 520), p, X, -320)
-	local history = At(Label(p, "", "GameFontHighlight", 520), p, X, -346)
-	At(Label(p, "Pick a person on the left and a template, press Fill in letter, read it over, then press Send in the\nmail window. Sending is what counts it. People you wrote to recently drop to the bottom of the list.", "GameFontDisableSmall", 520), p, X, -400)
+	local history = At(Label(p, "", "GameFontHighlightSmall", 530), p, X, -346)
+	At(Label(p, "Pick a person on the left and a template, press Fill in letter, read it over, then press Send in the\nmail window. Sending is what counts it. People you wrote to recently drop to the bottom of the list.", "GameFontDisableSmall", 520), p, X, -420)
 	filter:HookScript("OnClick", function() tab.Refresh() end)
 	to:SetScript("OnTextChanged", function() if tab.Refresh and p:IsShown() then tab.Refresh() end end)
 
@@ -821,13 +821,27 @@ AddTab("Mail", function(p, tab)
 		local typed = M.FindContact(to:GetText())
 		toKey = typed and typed.key or nil
 		follow:Set(M.FollowUps(filter.value, now), function(f)
-			local label = f.count == 0 and "never" or (f.count .. "x, " .. M.Ago(f.last, now))
-			return (f.recent and "|cff888888" or "") .. Name(f.key), label
+			local bought = M.PurchaseSummary(f.key).done > 0
+			local wrote = f.count == 0 and "not written" or ("wrote " .. M.Ago(f.last, now):gsub(" days? ago", "d"))
+			return (f.recent and "|cff888888" or "") .. Name(f.key), (bought and "|cff40ff40bought|r, " or "") .. wrote
 		end, toKey)
 		if typed then
-			history:SetText(("%s  (%s)\nFollow-ups sent: |cffffd100%d|r    Last: %s%s"):format(
-				Name(typed.key), typed.status, typed.outreach or 0, M.Ago(typed.lastOutreach, now),
-				typed.lastTemplate and ("  with \"" .. typed.lastTemplate .. "\"") or ""))
+			local ps = M.PurchaseSummary(typed.key)
+			local L = { ("|cffffd100%s|r  (%s)"):format(Name(typed.key), typed.status) }
+			if ps.done > 0 then
+				local o = ps.latest
+				L[#L + 1] = ("|cff40ff40Has bought from you:|r %d order%s, %s paid in total. Latest: %s on %s (%s)."):format(
+					ps.done, ps.done == 1 and "" or "s", U.FormatMoney(ps.value), M.OrderTitle(o, 50), date("%b %d", o.created), o.status)
+				L[#L + 1] = "Suggested: a past-customer letter, such as \"Follow-up: past customer\"."
+			elseif ps.orders > 0 then
+				L[#L + 1] = ("Has an order that is not finished yet: %s (%s)."):format(M.OrderTitle(ps.latest, 50), ps.latest.status)
+				L[#L + 1] = "Suggested: let them know where their order stands."
+			else
+				L[#L + 1] = "|cffff9060Has not bought anything yet.|r Suggested: a \"still available\" letter."
+			end
+			L[#L + 1] = ("Follow-up letters sent: %d    Last: %s%s"):format(typed.outreach or 0, M.Ago(typed.lastOutreach, now),
+				typed.lastTemplate and ("  with \"" .. typed.lastTemplate .. "\"") or "")
+			history:SetText(table.concat(L, "\n"))
 		else
 			history:SetText("")
 		end

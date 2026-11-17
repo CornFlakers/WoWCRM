@@ -56,7 +56,8 @@ function U.NormName(name, myRealm, tidy)
 	r = (r or ""):gsub("[%s%-]", "")
 	if r == "" then r = "Unknown" end
 	if tidy and not n:find("[\128-\255]") then
-		n = n:sub(1, 1):upper() .. n:sub(2):lower()
+		-- "rosa vell" -> "Rosa Vell": every word of the name gets a capital
+		n = n:lower():gsub("(%a)(%w*)", function(a, b) return a:upper() .. b end)
 	end
 	return n .. "-" .. r
 end

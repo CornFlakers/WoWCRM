@@ -238,6 +238,112 @@ function M.DeleteContact(key)
 	for _, c in pairs(r.contacts) do if c.referredBy == key then c.referredBy = nil end end
 end
 
+-- ---------------------------------------------------------------- two-part names
+-- On this client characters have a first and a last name ("Rosa Vell"). Whispers give the
+-- whole name, but when the game is asked for a unit's name (a trade partner, your target) it can
+-- hand the last name back where a realm would normally be. These helpers put the name together.
+
+-- Realms known to be real: ours, every realm we have data for, and the realm part of any contact
+-- whose name has a space (those keys came whole from a whisper).
+function M.KnownRealms()
+	local known = { [DB.realm] = true }
+	for k in pairs(DB.db and DB.db.realms or {}) do known[k] = true end
+	for key in pairs(R().contacts) do
+		local n, r = U.SplitKey(key)
+		if r and n:find(" ", 1, true) then known[r] = true end
+	end
+	return known
+end
+
+-- name and second as the game returned them -> contact key.
+function M.JoinName(name, second, known)
+	if type(second) ~= "string" or second == "" then return U.NormName(name, DB.realm) end
+	known = known or M.KnownRealms()
+	if known[(second:gsub("[%s%-]", ""))] then return U.NormName(name .. "-" .. second, DB.realm) end
+	return U.NormName(name .. " " .. second, DB.realm)
+end
+
+local STATUS_RANK = { lead = 1, customer = 2, ["repeat"] = 3, vip = 4, ["do not contact"] = 5, ignored = 6 }
+
+-- Contacts saved under a split name ("Rosa-Vell") are moved to the whole name
+-- ("Rosa Vell-<realm>"), merging with the contact from the whisper when there is one.
+-- Returns how many were repaired.
+function M.RepairSplitNames()
+	local r, known, moves = R(), M.KnownRealms(), {}
+	for key in pairs(r.contacts) do
+		local n, realm = U.SplitKey(key)
+		if realm and not known[realm] and not n:find(" ", 1, true) then
+			moves[key] = U.NormName(n .. " " .. realm, DB.realm)
+		end
+	end
+	local fixed = 0
+	for old, new in pairs(moves) do
+		local from, to = r.contacts[old], r.contacts[new]
+		if to then
+			if (STATUS_RANK[from.status] or 0) > (STATUS_RANK[to.status] or 0) then to.status = from.status end
+			to.firstSeen = math.min(to.firstSeen or from.firstSeen or 0, from.firstSeen or to.firstSeen or 0)
+			to.lastContact = math.max(to.lastContact or 0, from.lastContact or 0)
+			if (from.outreach or 0) > 0 then to.outreach = (to.outreach or 0) + from.outreach end
+			if (from.lastOutreach or 0) > (to.lastOutreach or 0) then to.lastOutreach, to.lastTemplate = from.lastOutreach, from.lastTemplate end
+			if (from.notes or "") ~= "" then to.notes = ((to.notes or "") ~= "" and (to.notes .. "\n") or "") .. from.notes end
+			if (to.tags or "") == "" then to.tags = from.tags end
+			to.referredBy = to.referredBy or from.referredBy
+			to.sourcePost = to.sourcePost or from.sourcePost
+		else
+			from.key = new
+			r.contacts[new] = from
+		end
+		r.contacts[old] = nil
+		for _, o in ipairs(r.orders) do if o.contact == old then o.contact = new end end
+		for _, l in ipairs(r.leads) do if l.contact == old then l.contact = new end end
+		for _, m in ipairs(r.mailLog) do if m.contact == old then m.contact = new end end
+		for _, c in pairs(r.contacts) do if c.referredBy == old then c.referredBy = new end end
+		fixed = fixed + 1
+	end
+	return fixed
+end
+
+-- Orders saved by the very first version listed several items as one line
+-- ("Red Mageweave Bag, Red Mageweave Bag"). Splits them into one line per item.
+function M.RepairJoinedItems()
+	local fixed = 0
+	for _, o in ipairs(R().orders) do
+		local out, changed = {}, false
+		for _, l in ipairs(o.items or {}) do
+			if not l.name:find("|H", 1, true) and l.name:find(", ", 1, true) then
+				changed = true
+				local byName, order = {}, {}
+				for part in (l.name .. ", "):gmatch("(.-), ") do
+					local q, rest = part:match("^(%d+)x (.+)$")
+					local name, qty = rest or part, tonumber(q) or 1
+					if not byName[name] then
+						local linkName = l.link and l.link:match("%[(.-)%]")
+						byName[name] = { name = name, qty = 0, link = (linkName == name) and l.link or nil }
+						order[#order + 1] = byName[name]
+					end
+					byName[name].qty = byName[name].qty + qty * (l.qty or 1)
+				end
+				for _, line in ipairs(order) do out[#out + 1] = line end
+			else
+				out[#out + 1] = l
+			end
+		end
+		if changed then o.items = out; fixed = fixed + 1 end
+	end
+	return fixed
+end
+
+-- What a contact has bought: orders, paid orders, lifetime value, and the latest order.
+function M.PurchaseSummary(key)
+	local orders = M.OrdersFor(key)
+	local ltv, paid = M.LTV(key)
+	local done = 0
+	for _, o in ipairs(orders) do
+		if o.status == "paid" or o.status == "delivered" then done = done + 1 end
+	end
+	return { orders = #orders, done = done, paid = paid, value = ltv, latest = orders[1] }
+end
+
 -- ---------------------------------------------------------------- leads
 
 -- An incoming whisper. Returns lead, isNewContact; or nil when it is not captured.
@@ -352,6 +458,11 @@ local function autoStatus(key)
 	local done = doneCount(key)
 	if c.status == "lead" and done >= 1 then c.status = "customer" end
 	if c.status == "customer" and done >= 2 then c.status = "repeat" end
+end
+
+-- Brings every contact's status up to date with their orders.
+function M.RefreshStatuses()
+	for key in pairs(R().contacts) do autoStatus(key) end
 end
 
 local function closeLeads(key)

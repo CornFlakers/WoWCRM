@@ -67,7 +67,8 @@ function GetUnitSpeed() return speed end
 function IsResting() return resting end
 function GetNormalizedRealmName() return "Stormrage" end
 function GetRealmName() return "Stormrage" end
-function UnitName(unit) if unit == "player" then return "Seller" elseif unit == "NPC" then return "Buyer" end return "Targ" end
+local npcName, npcSecond = "Buyer", nil
+function UnitName(unit) if unit == "player" then return "Seller" elseif unit == "NPC" then return npcName, npcSecond end return "Targ" end
 function UnitIsPlayer() return true end
 function GetZoneText() return "City" end
 function IsInGroup() return false end
@@ -178,6 +179,7 @@ local function message() return WoWCRMFrame.msg._text end
 fire("PLAYER_LOGIN")
 eq(ns.ready, true, "ready after login")
 eq(DB.settings.publicSpacing, 2, "two minutes between public posts by default")
+eq(ns.MyName(), "Seller", "own name")
 DB.settings.publicSpacing = 0 -- the steps below post back to back; the pause has its own steps near the end
 eq(type(WoWCRMDB), "table", "saved table created")
 eq(WoWCRMSaveButton._shown, false, "save button hidden with nothing to save")
@@ -390,6 +392,17 @@ eq(o.trades, 3, "three trades on one order")
 fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
 eq(o.trades, 3, "the same trade is not recorded twice")
 
+-- a trade with someone whose two-part name the game hands back split in two
+fire("CHAT_MSG_WHISPER", "can you make 4?", "Rosa Vell-Stormrage")
+npcName, npcSecond = "Rosa", "Vell"
+local rosaOrders = #DB.R.orders
+doTrade({ "Silk Bag", 4 }, nil, 40000)
+npcName, npcSecond = "Buyer", nil
+eq(#DB.R.orders, rosaOrders + 1, "trade recorded")
+eq(DB.R.orders[#DB.R.orders].contact, "Rosa Vell-Stormrage", "on the whisperer's whole name, not a half name")
+eq(M.GetContact("Rosa-Vell"), nil, "no half-name contact made")
+eq(M.GetContact("Rosa Vell-Stormrage").status, "customer", "the lead became a customer")
+
 -- the contact page lists the orders and opens one on click
 UI.Show("Contacts", "Ann-Stormrage")
 for _, w in ipairs(widgets) do
@@ -430,6 +443,15 @@ eq(picked ~= nil, true, "leads appear in the follow-up list")
 picked._scripts.OnClick(picked)
 click("Fill in letter", mail)
 eq(SendMailNameEditBox._text, "Carl", "clicking a lead addresses the letter to them")
+local function mailSays(text)
+	for _, w in ipairs(widgets) do if w._kind == "FontString" and inside(w, mail) and w._text:find(text, 1, true) then return true end end
+	return false
+end
+eq(mailSays("Has not bought anything yet"), true, "someone with no orders is flagged as not having bought")
+UI.Show("Mail", "Rosa Vell-Stormrage")
+eq(mailSays("Has bought from you:|r 1 order, 4g paid in total"), true, "a buyer's orders are shown when picked")
+eq(mailSays("past-customer letter"), true, "and a past-customer letter is suggested")
+UI.Show("Mail", "Carl-Stormrage")
 SendMail("Carl", "s", "b")
 fire("MAIL_SEND_SUCCESS")
 eq(M.GetContact("Carl-Stormrage").outreach, 1, "follow-up to the lead counted")

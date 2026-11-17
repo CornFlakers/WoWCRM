@@ -38,10 +38,10 @@ local function readSide(getLink, getInfo, priced)
 end
 
 ns.On("TRADE_SHOW", function()
-	local name, realm = UnitName("NPC")
+	local name, second = UnitName("NPC")
 	trade = { valid = false }
 	if type(name) == "string" and name ~= "" then
-		trade.key = U.NormName((realm and realm ~= "") and (name .. "-" .. realm) or name, DB.realm)
+		trade.key = M.JoinName(name, second)
 	end
 end)
 

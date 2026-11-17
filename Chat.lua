@@ -51,7 +51,7 @@ function Chat.Available(target)
 end
 
 function Chat.Render(post)
-	return U.Fill(post.text, { me = UnitName("player"), zone = GetZoneText() })
+	return U.Fill(post.text, { me = ns.MyName(), zone = GetZoneText() })
 end
 
 -- Sends one message to one channel. MUST be called directly from a click or key press.

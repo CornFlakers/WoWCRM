@@ -5,6 +5,15 @@ local U, DB, M = ns.Util, ns.DB, ns.Model
 ns.unsaved = 0
 ns.listeners = {}
 
+-- Your own name. Two-part names may come back split in two, like a trade partner's.
+function ns.MyName()
+	local n, second = UnitName("player")
+	if type(second) == "string" and second ~= "" and ns.ready and not M.KnownRealms()[(second:gsub("[%s%-]", ""))] then
+		return n .. " " .. second
+	end
+	return n
+end
+
 function ns.Print(msg)
 	DEFAULT_CHAT_FRAME:AddMessage("|cff33ccffWoW CRM:|r " .. tostring(msg))
 end
@@ -154,6 +163,13 @@ ns.On("PLAYER_LOGIN", function()
 	local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName() or "Unknown"):gsub("[%s%-]", "")
 	WoWCRMDB = DB.Init(WoWCRMDB, realm)
 	ns.ready = true
+	local names, items = M.RepairSplitNames(), M.RepairJoinedItems()
+	M.RefreshStatuses()
+	if names + items > 0 then
+		ns.Print(("tidied up %d contact%s saved under half a name and %d old order%s."):format(
+			names, names == 1 and "" or "s", items, items == 1 and "" or "s"))
+		ns.Changed()
+	end
 	local on = M.TrackingState(U.Now())
 	if on then ns.Print("contact tracking is still ON.") end
 	ns.Notify()

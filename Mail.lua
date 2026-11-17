@@ -18,7 +18,7 @@ end
 
 -- Values for {name} {item} {total} {me}, taken from the contact's most recent order.
 function Mail.Vars(key)
-	local vars = { name = (U.SplitKey(key)), me = UnitName("player"), item = "order", total = U.FormatMoney(0) }
+	local vars = { name = (U.SplitKey(key)), me = ns.MyName(), item = "order", total = U.FormatMoney(0) }
 	local latest
 	for _, o in ipairs(DB.R.orders) do
 		if o.contact == key and (not latest or o.created >= latest.created) then latest = o end

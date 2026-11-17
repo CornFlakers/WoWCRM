@@ -18,6 +18,7 @@ local ALL = function() return true end
 
 -- names
 eq(U.NormName("bob", "Stormrage", true), "Bob-Stormrage", "tidy plain name")
+eq(U.NormName("rosa vell", "Stormrage", true), "Rosa Vell-Stormrage", "every word of a typed name gets a capital")
 eq(U.NormName("Bob-Area 52", "Stormrage"), "Bob-Area52", "realm spaces removed")
 eq(U.NormName("  ", "Stormrage"), nil, "empty name")
 eq(U.NormName("\195\137lise", "Stormrage", true), "\195\137lise-Stormrage", "accented name left alone")
@@ -579,6 +580,43 @@ qo.altTemplate = ""
 eq(Cat.QuoteText(bq[1], alt, qo), "Hi Ann! Big Bag (16 slot) is 4g with my mats.", "the option can be left out")
 eq(Cat.WowheadURL(bq[1]), "https://www.wowhead.com/forever/spell=11", "Wowhead page for the recipe")
 eq(Cat.WowheadURL({ name = "Black Silk Pack" }), "https://www.wowhead.com/forever/search?q=Black+Silk+Pack", "Wowhead search when the recipe id is unknown")
+
+-- two-part names: joined when the game splits them, and repaired in saved data
+fresh()
+eq(M.JoinName("Rosa", "Vell"), "Rosa Vell-Stormrage", "a last name in the realm slot is joined to the first name")
+eq(M.JoinName("Ann", nil), "Ann-Stormrage", "a plain name")
+eq(M.JoinName("Ann", "Stormrage"), "Ann-Stormrage", "our own realm is still read as a realm")
+M.EnsureContact("Zed Ward-Faraway", T)
+eq(M.JoinName("Zed", "Faraway"), "Zed-Faraway", "a realm seen in a whispered name is read as a realm")
+M.EnsureContact("Brin Ashby-Stormrage", T)
+M.GetContact("Brin Ashby-Stormrage").sourcePost = 5
+local split = M.EnsureContact("Brin-Ashby", T + 50)
+split.notes = "paid fast"
+M.SaveOrder(nil, { contact = "Brin-Ashby", items = { { name = "Silk Bag", qty = 1 } }, price = 10000, status = "paid" }, T + 50)
+M.EnsureContact("Tam-Holloway", T)
+M.SaveOrder(nil, { contact = "Tam-Holloway", items = { { name = "Red Mageweave Bag, Red Mageweave Bag, 2x Linen Bag", qty = 1, link = "|Hitem:1|h[Red Mageweave Bag]|h" } }, price = 5, status = "paid" }, T)
+eq(M.RepairSplitNames(), 2, "two contacts saved under half a name")
+eq(M.GetContact("Brin-Ashby"), nil, "the half-name contact is gone")
+eq(M.LTV("Brin Ashby-Stormrage"), 10000, "its order now belongs to the whole name")
+eq(M.GetContact("Brin Ashby-Stormrage").notes, "paid fast", "notes carried over")
+eq(M.GetContact("Brin Ashby-Stormrage").sourcePost, 5, "the lead's post is kept")
+eq(M.GetContact("Tam Holloway-Stormrage") ~= nil, true, "a half name with no whisper contact is renamed")
+eq(M.GetContact("Zed Ward-Faraway") ~= nil, true, "whole names are left alone")
+M.RefreshStatuses()
+eq(M.GetContact("Brin Ashby-Stormrage").status, "customer", "the merged contact counts as a customer")
+eq(M.RepairSplitNames(), 0, "nothing left to repair the second time")
+eq(M.RepairJoinedItems(), 1, "one old order with items joined into one line")
+local vo = M.OrdersFor("Tam Holloway-Stormrage")[1]
+eq(#vo.items, 2, "split into one line per item")
+eq(vo.items[1].qty, 2, "Red Mageweave Bag twice")
+eq(vo.items[1].link ~= nil, true, "the link stays with its own item")
+eq(vo.items[2].name, "Linen Bag", "second item")
+eq(vo.items[2].qty, 2, "with its quantity")
+eq(M.RepairJoinedItems(), 0, "nothing left to split the second time")
+local ps = M.PurchaseSummary("Brin Ashby-Stormrage")
+eq(ps.done, 1, "one finished order")
+eq(ps.value, 10000, "what they have paid")
+eq(M.PurchaseSummary("Zed Ward-Faraway").orders, 0, "someone who has bought nothing")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

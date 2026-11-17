@@ -32,6 +32,24 @@ A typical session:
 3. Click **Post to …** once per channel (or use the quick-post bar).
 4. Replies appear on the **Leads** tab. Whisper back, then **New order** when they buy.
 
+## Campaigns
+
+A campaign is a selling session: the posts you want to run, how long to run for, and how long to wait between posts to the same channel (5 minutes unless you change it).
+
+1. **Campaigns** tab: tick the posts, set the length and the wait, press **Start campaign**. Contact tracking switches on.
+2. A small campaign bar shows what is due. When a post is due it plays a sound and the button reads "Post name > Channel". One click sends that one message.
+3. Between posts the button counts down. With several posts in a campaign, they take turns.
+
+The add-on never posts on its own; the game only allows posts that come from your click. A campaign tells you when, so you are not guessing or spamming.
+
+Each campaign keeps its own results, per post: times posted, leads, orders, gold and goods, leads per post, and the share of leads who ordered. The **Dashboard** adds the same per post for all time, and a table by hour of day so you can see when posting works.
+
+## Products
+
+The **Products** tab lists your recipes by profession and category with materials cost, sale value, margin and how many you have sold through WoW CRM. Sort by any of those, search by name, and mark the things you sell as "my products". Click a recipe to see its materials; materials another scanned profession can craft are flagged.
+
+Recipes are read from the Mastercraft add-on's scan of your professions, and prices from TradeSkillMaster or Auctionator (vendor price otherwise). Without Mastercraft the tab is empty; everything else works.
+
 ## Orders, materials and tips
 
 An order has three parts:

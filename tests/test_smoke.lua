@@ -103,7 +103,16 @@ function GetTradePlayerItemLink(i) if i == 1 and tGive then return link(tGive[1]
 function GetTradePlayerItemInfo(i) if i == 1 and tGive then return tGive[1], nil, tGive[2] end end
 function GetTradeTargetItemLink(i) if i == 1 and tGet then return link(tGet[1]) end end
 function GetTradeTargetItemInfo(i) if i == 1 and tGet then return tGet[1], nil, tGet[2] end end
-Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end } } }
+Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end, GetAuctionPriceByItemID = function() return 250 end } } }
+function UnitGUID() return "Player-1" end
+function PlaySound() end
+MastercraftDB = { recipes = { ["Player-1"] = {
+	Tailoring = { list = {
+		{ id = 1, name = "Runecloth Bag", category = "Bags", learned = true, output = 14046, outputQty = 1, reagents = { { itemID = 14048, qty = 5 } } },
+		{ id = 2, name = "Silk Reagent Bag", category = "Specialty Bags", learned = false, output = 500, reagents = { { itemID = 900, qty = 1 } } },
+	} },
+	Alchemy = { list = { { id = 3, name = "Blue Dye", category = "Dyes", learned = false, output = 900, reagents = {} } } },
+} } }
 
 -- ---------------------------------------------------------------- load the add-on in TOC order
 local ns, files = {}, {}
@@ -111,7 +120,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	line = line:gsub("%s+$", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
-assert(#files == 9, "TOC should list 9 files, found " .. #files)
+assert(#files == 10, "TOC should list 10 files, found " .. #files)
 local globalsBefore = { codAmount = true }
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
@@ -367,7 +376,75 @@ click("Export", dash)
 local exported = false
 for _, w in ipairs(kind("EditBox", dash)) do if w._text:sub(1, 7) == "WOWCRM2" then exported = true end end
 eq(exported, true, "export produced")
-click("Apply settings", dash)
+UI.Show("Options")
+local opts = UI.tabs.Options.panel
+kind("EditBox", opts)[1]:SetText("5")
+click("Apply options", opts)
+eq(DB.settings.minGap, 30, "option below the minimum is raised to it")
+
+-- a campaign: start, post when due, wait out the gap, finish
+UI.Show("Campaigns")
+local camp = UI.tabs.Campaigns.panel
+local cedits = kind("EditBox", camp) -- name, minutes, wait
+eq(cedits[2]._text, "60", "campaign length comes from the options")
+eq(cedits[3]._text, "5", "wait between posts comes from the options")
+cedits[1]:SetText("Evening bags")
+cedits[2]:SetText("30")
+clock = clock + 600
+M.cursor = {} -- start this post's channel rotation from the top
+click("Start campaign", camp)
+local running = M.ActiveCampaign(clock)
+eq(running ~= nil, true, "campaign started")
+eq(#running.posts, 1, "ticked posts are in the campaign")
+eq(find("Start campaign", camp)._enabled, false, "cannot start a second campaign while one runs")
+local alerts = 0
+local function countAlerts() local n = 0; for _, m in ipairs(printed) do if m:find("time to post", 1, true) then n = n + 1 end end return n end
+UI.CampaignTick()
+eq(countAlerts(), 1, "one alert when a post is due")
+UI.CampaignTick()
+eq(countAlerts(), 1, "the alert is not repeated every second")
+local nsent = #sent
+click("Enchants > Say")
+eq(#sent, nsent + 1, "campaign bar click sends one message")
+click("Enchants > Trade")
+eq(#sent, nsent + 2, "next click sends to the next channel")
+eq(find("Next post in 5:00") ~= nil, true, "then the bar counts down the campaign wait")
+clock = clock + 120
+UI.CampaignTick()
+eq(find("Next post in 3:00") ~= nil, true, "countdown follows the clock")
+eq(#sent, nsent + 2, "nothing is posted without a click")
+fire("CHAT_MSG_WHISPER", "do you make bags?", "Dora-Stormrage")
+eq(DB.R.leads[#DB.R.leads].campaign, running.id, "whisper during a campaign is tied to it")
+clock = clock + 181
+UI.CampaignTick()
+eq(countAlerts(), 2, "alert again when the wait is over")
+eq(find("Enchants > Say") ~= nil, true, "post offered again after the wait")
+local crep = M.CampaignReport(running.id)
+eq(crep.sends, 2, "campaign counted its posts")
+eq(crep.leads, 1, "campaign counted its lead")
+clock = clock + 1800
+UI.CampaignTick()
+eq(running.status, "ended", "campaign ends when its time is up")
+eq(find("Start one on the Campaigns tab") ~= nil, true, "bar says no campaign is running")
+
+-- products: read from the recipe scan, with prices and cross-profession materials
+UI.Show("Products")
+local prod = UI.tabs.Products.panel
+click("Alchemy", prod)
+local function row(name)
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.name == name and w.item.reagents and inside(w, prod) and w._shown then return w end
+	end
+end
+eq(row("Runecloth Bag") ~= nil, true, "recipes listed for the chosen profession")
+row("Runecloth Bag")._scripts.OnClick(row("Runecloth Bag"))
+click("Add to my products", prod)
+eq(DB.R.products["Tailoring|Runecloth Bag"] ~= nil, true, "recipe marked as my product")
+eq(find("Remove from my products", prod) ~= nil, true, "button flips once it is a product")
+row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
+local flagged = false
+for _, w in ipairs(widgets) do if w._kind == "FontString" and w._text:find("made by Alchemy", 1, true) then flagged = true end end
+eq(flagged, true, "material made by another profession is flagged")
 SlashCmdList.WOWCRM("bar")
 eq(DB.settings.barShown, true, "quick-post bar shown")
 clock = clock + 120
@@ -387,6 +464,7 @@ eq(DB.db.probe.targets.TRADE, "ok", "probe records channel availability")
 eq(DB.db.probe.targets.PARTY, "not in a party", "probe records why a channel is unavailable")
 
 -- a reload keeps everything
+M.SetTracking(true, clock) -- the long campaign above let tracking time out, as it should
 local saved = WoWCRMDB
 DB.Init(saved, "Stormrage")
 eq(#DB.R.posts, 1, "posts survive a reload")

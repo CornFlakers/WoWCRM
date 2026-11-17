@@ -10,6 +10,9 @@ local DEFAULTS = {
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
 	saveReminder = true,  -- show the "Save changes" button
 	promptStrangers = true, -- offer to record a sale to someone who is not yet a contact
+	campaignMinutes = 60, -- usual length of a campaign
+	postInterval = 5,     -- usual minutes between posts to the same channel during a campaign
+	campaignSound = true, -- sound when the next campaign post is due
 	outreachGap = 3,      -- days before someone you already wrote to comes back to the top of the follow-up list
 	orderWindow = 60,     -- minutes during which a follow-up trade is offered as part of the same order
 	generalName = "General",
@@ -33,7 +36,7 @@ MIGRATIONS[1] = function(saved)
 	end
 end
 
-local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates" }
+local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates", "campaigns" }
 
 function DB.Init(saved, realm)
 	saved = type(saved) == "table" and saved or {}
@@ -56,6 +59,8 @@ function DB.Init(saved, realm)
 	for _, k in ipairs(LISTS) do R[k] = R[k] or {} end
 	R.contacts = R.contacts or {}
 	R.lastSent = R.lastSent or {}
+	R.products = R.products or {}
+	R.sendHours = R.sendHours or {}
 	R.tracking = R.tracking or { on = false }
 	R.nextId = R.nextId or 1
 

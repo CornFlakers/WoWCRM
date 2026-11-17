@@ -55,7 +55,12 @@ end
 function M.GapRemaining(target, now)
 	local last = R().lastSent[target]
 	if not last then return 0 end
-	local gap = ns.PUBLIC_TARGET[target] and DB.settings.minGap or 2
+	local gap = 2
+	if ns.PUBLIC_TARGET[target] then
+		gap = DB.settings.minGap
+		local c = M.RunningCampaign(now)
+		if c then gap = math.max(gap, c.interval * 60) end
+	end
 	local left = gap - (now - last)
 	return left > 0 and math.ceil(left) or 0
 end
@@ -84,14 +89,19 @@ end
 
 function M.RecordSend(post, target, now, zone)
 	local r = R()
+	local c = M.ActiveCampaign(now)
+	local cid = (c and U.Contains(c.posts, post.id)) and c.id or nil
 	r.lastSent[target] = now
 	M.cursor[post.id] = U.Contains(ns.TARGETS, target) or 0
-	r.lastPost = { id = post.id, time = now }
+	r.lastPost = { id = post.id, time = now, campaign = cid }
 	local log = r.postLog
-	log[#log + 1] = { post = post.id, target = target, time = now, zone = zone }
+	log[#log + 1] = { post = post.id, target = target, time = now, zone = zone, campaign = cid }
 	while #log > 500 do table.remove(log, 1) end
+	local hour = U.Hour(now)
+	r.sendHours[hour] = (r.sendHours[hour] or 0) + 1
+	if cid then c.sendsByPost[post.id] = (c.sendsByPost[post.id] or 0) + 1 end
 	if r.tracking.on then
-		r.tracking.post, r.tracking.postTime = post.id, now
+		r.tracking.post, r.tracking.postTime, r.tracking.campaign = post.id, now, cid
 	end
 end
 
@@ -102,14 +112,18 @@ function M.SetTracking(on, now)
 	r.tracking = { on = on and true or false, since = on and now or nil }
 	-- A post made just before switching on still counts.
 	if on and r.lastPost and now - r.lastPost.time <= 300 and M.GetPost(r.lastPost.id) then
-		r.tracking.post, r.tracking.postTime = r.lastPost.id, r.lastPost.time
+		r.tracking.post, r.tracking.postTime, r.tracking.campaign = r.lastPost.id, r.lastPost.time, r.lastPost.campaign
 	end
 end
 
 -- Returns: on, capturing, minutesLeft
+-- While a campaign is running, tracking stays on. Otherwise it switches itself off some
+-- time after the last post, so late replies to a finished campaign are still caught.
 function M.TrackingState(now)
 	local t = R().tracking
 	if not t.on then return false, false end
+	local c = M.ActiveCampaign(now)
+	if c then return true, t.post ~= nil, math.ceil((c.ends - now) / 60) end
 	local limit = DB.settings.trackAutoOff or 0
 	if limit > 0 then
 		local ref = t.postTime or t.since or now
@@ -190,7 +204,8 @@ function M.OnWhisper(key, text, now)
 			return lead, false
 		end
 	end
-	local lead = { id = M.NewId(), contact = key, post = t.post, text = text, time = now, status = "open", count = 1 }
+	local lead = { id = M.NewId(), contact = key, post = t.post, campaign = t.campaign, sentAt = t.postTime,
+		text = text, time = now, status = "open", count = 1 }
 	table.insert(R().leads, lead)
 	return lead, isNew
 end
@@ -211,6 +226,20 @@ end
 --   price    gold received (or quoted)
 
 function M.GetOrder(id) return findById(R().orders, id) end
+
+-- A new order belongs to the post (and campaign) behind the customer's most recent lead.
+local function attribute(o)
+	local best
+	for _, l in ipairs(R().leads) do
+		if l.contact == o.contact and (not best or l.time >= best.time) then best = l end
+	end
+	if best then
+		o.post, o.campaign, o.sentAt = best.post, best.campaign, best.sentAt
+	else
+		local c = M.GetContact(o.contact)
+		o.post = c and c.sourcePost or nil
+	end
+end
 
 local function cleanLines(lines, received)
 	local out = {}
@@ -302,12 +331,14 @@ function M.SaveOrder(id, f, now)
 	end
 
 	M.EnsureContact(f.contact, now)
-	if not o then
+	local isNew = not o
+	if isNew then
 		o = { id = M.NewId(), created = now }
 		table.insert(R().orders, o)
 	end
 	local oldContact = o.contact
 	o.contact, o.type, o.desc = f.contact, otype, desc
+	if isNew then attribute(o) end
 	o.items, o.received = items, received
 	o.price, o.notes, o.updated = math.floor(price + 0.5), f.notes or "", now
 	setStatus(o, status, now)
@@ -369,6 +400,7 @@ function M.AddTrade(id, key, trade, now)
 	if not o then
 		o = { id = M.NewId(), created = now, contact = key, type = "crafted", desc = "", items = {}, received = {}, price = 0, notes = "", trades = 0 }
 		table.insert(R().orders, o)
+		attribute(o)
 	end
 	local asPayment = #o.items > 0 or #given > 0
 	for _, l in ipairs(received) do
@@ -446,7 +478,7 @@ function M.Stats()
 	end
 	for _, o in ipairs(r.orders) do
 		local c = r.contacts[o.contact]
-		local ps = c and byPost[c.sourcePost]
+		local ps = byPost[o.post] or (c and byPost[c.sourcePost])
 		local gold, goods, mats = M.OrderValue(o)
 		if o.status == "paid" then
 			s.gold, s.goods, s.mats = s.gold + gold, s.goods + goods, s.mats + mats
@@ -516,6 +548,193 @@ function M.LogMail(key, subject, now)
 	log[#log + 1] = { contact = key, subject = subject, time = now }
 	while #log > 500 do table.remove(log, 1) end
 	return true
+end
+
+-- ---------------------------------------------------------------- campaigns
+-- A campaign is a selling session: a set of posts, a time window, and a minimum wait
+-- between posts to the same public channel. The add-on never posts by itself; a campaign
+-- works out what is due next and the player clicks to send it.
+
+function M.GetCampaign(id) return id and findById(R().campaigns, id) or nil end
+
+-- The running campaign, without changing anything.
+function M.RunningCampaign(now)
+	local c = M.GetCampaign(R().activeCampaign)
+	if c and c.status == "running" and now < c.ends then return c end
+end
+
+function M.EndCampaign(now)
+	local c = M.GetCampaign(R().activeCampaign)
+	R().activeCampaign = nil
+	if c and c.status == "running" then
+		c.status = "ended"
+		c.endedAt = math.min(now, c.ends)
+	end
+	return c
+end
+
+-- The running campaign; closes it when its time is up. The second value is a campaign
+-- that has just finished on this call.
+function M.ActiveCampaign(now)
+	local c = M.GetCampaign(R().activeCampaign)
+	if not c or c.status ~= "running" then return nil end
+	if now >= c.ends then
+		M.EndCampaign(now)
+		return nil, c
+	end
+	return c
+end
+
+function M.StartCampaign(name, postIds, minutes, interval, now)
+	minutes = math.floor(tonumber(minutes) or 0)
+	interval = math.floor(tonumber(interval) or 0)
+	if minutes < 1 then return nil, "Set how many minutes the campaign runs for." end
+	if interval < 1 then return nil, "The wait between posts must be at least 1 minute." end
+	local posts = {}
+	for _, id in ipairs(postIds or {}) do
+		if M.GetPost(id) then posts[#posts + 1] = id end
+	end
+	if #posts == 0 then return nil, "Pick at least one post for the campaign." end
+	name = U.Trim(name)
+	if name == "" then name = "Campaign" end
+
+	M.EndCampaign(now)
+	local c = {
+		id = M.NewId(), name = name, started = now, ends = now + minutes * 60, minutes = minutes,
+		interval = interval, posts = posts, turn = 1, status = "running", sendsByPost = {},
+	}
+	table.insert(R().campaigns, c)
+	R().activeCampaign = c.id
+	M.SetTracking(true, now)
+	return c
+end
+
+-- What to post next: post, channel. When nothing is due: nil, nil, seconds until something is.
+function M.CampaignNext(c, avail, now)
+	local n, wait = #c.posts, nil
+	for i = 0, n - 1 do
+		local idx = ((c.turn - 1 + i) % n) + 1
+		local post = M.GetPost(c.posts[idx])
+		if post then
+			local target = M.NextTarget(post, avail, now)
+			if target then return post, target, 0 end
+			for _, t in ipairs(ns.TARGETS) do
+				if post.targets[t] and avail(t) then
+					local g = M.GapRemaining(t, now)
+					if g > 0 and (not wait or g < wait) then wait = g end
+				end
+			end
+		end
+	end
+	return nil, nil, wait
+end
+
+-- After a send: once a post has nothing more it can send right now, the next post gets its turn.
+function M.CampaignAdvance(c, post, avail, now)
+	if not M.NextTarget(post, avail, now) then
+		local idx = U.Contains(c.posts, post.id) or c.turn
+		c.turn = (idx % #c.posts) + 1
+	end
+end
+
+-- The funnel for one campaign: per post, how often it was posted, the leads it brought,
+-- the orders those leads placed, and what they paid in gold and in goods.
+function M.CampaignReport(id)
+	local c = M.GetCampaign(id)
+	if not c then return nil end
+	local rep = { campaign = c, sends = 0, leads = 0, orders = 0, gold = 0, goods = 0, posts = {} }
+	local byPost = {}
+	for _, pid in ipairs(c.posts) do
+		local post = M.GetPost(pid)
+		local row = { name = post and post.name or "(deleted post)", sends = (c.sendsByPost[pid] or 0),
+			leads = 0, orders = 0, gold = 0, goods = 0, sold = {}, soldNames = {} }
+		byPost[pid] = row
+		rep.posts[#rep.posts + 1] = row
+		rep.sends = rep.sends + row.sends
+	end
+	for _, l in ipairs(R().leads) do
+		if l.campaign == id then
+			rep.leads = rep.leads + 1
+			if byPost[l.post] then byPost[l.post].leads = byPost[l.post].leads + 1 end
+		end
+	end
+	for _, o in ipairs(R().orders) do
+		if o.campaign == id and o.status ~= "cancelled" then
+			local row = byPost[o.post]
+			rep.orders = rep.orders + 1
+			if row then row.orders = row.orders + 1 end
+			if o.status == "paid" then
+				local gold, goods = M.OrderValue(o)
+				rep.gold, rep.goods = rep.gold + gold, rep.goods + goods
+				if row then row.gold, row.goods = row.gold + gold, row.goods + goods end
+			end
+			if row and o.status ~= "quoted" then
+				for _, l in ipairs(o.items) do
+					if not row.soldNames[l.name] then
+						row.soldNames[l.name] = { name = l.name, qty = 0 }
+						row.sold[#row.sold + 1] = row.soldNames[l.name]
+					end
+					row.soldNames[l.name].qty = row.soldNames[l.name].qty + l.qty
+				end
+			end
+		end
+	end
+	for _, row in ipairs(rep.posts) do row.soldNames = nil end
+	return rep
+end
+
+-- How many of each item has been handed over, across all orders: item name -> quantity.
+function M.SoldCounts()
+	local out = {}
+	for _, o in ipairs(R().orders) do
+		if o.status ~= "cancelled" and o.status ~= "quoted" then
+			for _, l in ipairs(o.items) do out[l.name] = (out[l.name] or 0) + l.qty end
+		end
+	end
+	return out
+end
+
+-- "3:05" or "1:02:00"
+function M.Clock(seconds)
+	seconds = math.max(0, math.floor(seconds))
+	local h, m, s = math.floor(seconds / 3600), math.floor((seconds % 3600) / 60), seconds % 60
+	if h > 0 then return ("%d:%02d:%02d"):format(h, m, s) end
+	return ("%d:%02d"):format(m, s)
+end
+
+-- Activity by hour of the day: posts sent, and the leads, orders and income that came from
+-- posts sent in that hour. Only hours with something to show are returned.
+function M.HourReport()
+	local rows = {}
+	local function row(h)
+		rows[h] = rows[h] or { hour = h, sends = 0, leads = 0, orders = 0, income = 0 }
+		return rows[h]
+	end
+	for h, n in pairs(R().sendHours) do row(tonumber(h)).sends = n end
+	for _, l in ipairs(R().leads) do
+		local r = row(U.Hour(l.sentAt or l.time))
+		r.leads = r.leads + 1
+	end
+	for _, o in ipairs(R().orders) do
+		if o.status ~= "cancelled" then
+			local r = row(U.Hour(o.sentAt or o.created))
+			r.orders = r.orders + 1
+			if o.status == "paid" then
+				local gold, goods = M.OrderValue(o)
+				r.income = r.income + gold + goods
+			end
+		end
+	end
+	local out = {}
+	for h = 0, 23 do if rows[h] then out[#out + 1] = rows[h] end end
+	return out
+end
+
+-- "1.5 per post", "40%": plain-language rates for the funnel.
+function M.Rate(part, whole, percent)
+	if not whole or whole == 0 then return "-" end
+	if percent then return ("%d%%"):format(math.floor(part / whole * 100 + 0.5)) end
+	return ("%.1f"):format(part / whole)
 end
 
 -- ---------------------------------------------------------------- follow-up outreach

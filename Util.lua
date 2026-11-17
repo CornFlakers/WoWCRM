@@ -19,6 +19,12 @@ function U.Now()
 	return f()
 end
 
+-- Hour of the day (0-23) on the player's own clock.
+function U.Hour(t)
+	local d = rawget(_G, "date") or os.date
+	return tonumber(d("%H", t)) or 0
+end
+
 function U.Trim(s)
 	s = tostring(s or "")
 	s = s:gsub("^%s+", "")

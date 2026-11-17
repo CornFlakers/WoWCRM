@@ -166,6 +166,8 @@ SlashCmdList["WOWCRM"] = function(msg)
 		ns.SetTracking(not on)
 	elseif cmd == "bar" then
 		ns.UI.ToggleBar()
+	elseif cmd == "campaign" then
+		ns.UI.ToggleCampaignBar()
 	elseif cmd == "save" then
 		ns.Print("click the Save button (a reload must come from a click).")
 		ns.unsaved = math.max(ns.unsaved, 1)
@@ -173,7 +175,7 @@ SlashCmdList["WOWCRM"] = function(msg)
 	elseif cmd == "probe" then
 		ns.Chat.Probe()
 	else
-		ns.Print("commands: /crm, /crm add Name, /crm track [on|off], /crm bar, /crm probe")
+		ns.Print("commands: /crm, /crm campaign, /crm bar, /crm track [on|off], /crm add Name, /crm probe")
 	end
 end
 

@@ -84,6 +84,21 @@ function Chat.SendNext(post)
 	return false, err
 end
 
+-- One click during a campaign: send whatever the campaign says is due.
+function Chat.CampaignPost()
+	local now = U.Now()
+	local c = M.ActiveCampaign(now)
+	if not c then return false, "No campaign is running." end
+	local post, target, wait = M.CampaignNext(c, Chat.Available, now)
+	if not post then
+		return false, wait and ("Next post in " .. M.Clock(wait) .. ".") or "None of this campaign's channels are available here."
+	end
+	local ok, err = Chat.Send(post, target)
+	if not ok then return false, err end
+	M.CampaignAdvance(c, post, Chat.Available, U.Now())
+	return true, post.name .. " > " .. ns.TARGET_LABEL[target]
+end
+
 -- ---------------------------------------------------------------- whispers
 
 ns.On("CHAT_MSG_WHISPER", function(text, sender)

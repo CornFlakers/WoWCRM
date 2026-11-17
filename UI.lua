@@ -811,49 +811,245 @@ AddTab("Mail", function(p, tab)
 	end
 end)
 
+-- ---------------------------------------------------------------- Campaigns
+
+-- A cycle button whose choices can change (professions, categories).
+local function DynCycle(parent, w, onChange)
+	local b = Button(parent, "-", w)
+	b.list = {}
+	function b:SetList(list)
+		self.list = list
+		if not U.Contains(list, self.value) then self.value = list[1] end
+		self:SetText(self.value or "-")
+	end
+	b:SetScript("OnClick", function(self)
+		if #self.list == 0 then return end
+		local i = U.Contains(self.list, self.value) or 0
+		self.value = self.list[i % #self.list + 1]
+		self:SetText(self.value)
+		if onChange then onChange() end
+	end)
+	return b
+end
+
+local function campaignText(rep, now)
+	local c = rep.campaign
+	local L = {}
+	if c.status == "running" and now < c.ends then
+		L[#L + 1] = ("|cffffd100%s|r  -  |cff40ff40running|r, %s left, posts at least %d min apart per channel"):format(c.name, M.Clock(c.ends - now), c.interval)
+	else
+		L[#L + 1] = ("|cffffd100%s|r  -  ran %s to %s"):format(c.name, When(c.started), When(c.endedAt or c.ends))
+	end
+	L[#L + 1] = ("Posted %d times    Leads: %d    Orders: %d    Income: %s gold + %s in goods"):format(
+		rep.sends, rep.leads, rep.orders, U.FormatMoney(rep.gold), U.FormatMoney(rep.goods))
+	L[#L + 1] = ("Leads per post: %s    Leads who ordered: %s"):format(M.Rate(rep.leads, rep.sends), M.Rate(rep.orders, rep.leads, true))
+	L[#L + 1] = ""
+	L[#L + 1] = "|cffffd100By post|r  (times posted / leads / orders / gold + goods)"
+	for _, row in ipairs(rep.posts) do
+		L[#L + 1] = ("  %s:  %d / %d / %d / %s + %s    |cff888888%s leads per post, %s ordered|r"):format(U.Shorten(row.name, 24), row.sends, row.leads, row.orders,
+			U.FormatMoney(row.gold), U.FormatMoney(row.goods), M.Rate(row.leads, row.sends), M.Rate(row.orders, row.leads, true))
+		if #row.sold > 0 then L[#L + 1] = "      sold: " .. M.Summary(row.sold, 70) end
+	end
+	return table.concat(L, "\n")
+end
+
+AddTab("Campaigns", function(p, tab)
+	local sel
+	local chosen, known, primed = {}, {}, false
+	local list = At(List(p, 250, 430, function(item) sel = item.id; tab.Refresh() end), p, 0, 0)
+	local X = 264
+
+	At(Label(p, "Name"), p, X, -4)
+	local name = At(Edit(p, 240), p, X + 60, 0)
+	At(Label(p, "Run for"), p, X, -30)
+	local minutes = At(Edit(p, 46), p, X + 60, -26)
+	At(Label(p, "minutes", "GameFontHighlightSmall"), p, X + 112, -31)
+	At(Label(p, "Wait"), p, X + 180, -30)
+	local wait = At(Edit(p, 46), p, X + 222, -26)
+	At(Label(p, "minutes between posts to one channel", "GameFontHighlightSmall"), p, X + 274, -31)
+	At(Label(p, "Posts in this campaign (click to include or leave out)"), p, X, -58)
+	local postList = At(List(p, 500, 96, function(item)
+		chosen[item.id] = (not chosen[item.id]) or nil
+		tab.Refresh()
+	end), p, X, -74)
+
+	local start = At(Button(p, "Start campaign", 140, function()
+		local ids = {}
+		for _, post in ipairs(DB.R.posts) do
+			if chosen[post.id] then ids[#ids + 1] = post.id end
+		end
+		local c, err = M.StartCampaign(name:GetText(), ids, minutes:GetText(), wait:GetText(), U.Now())
+		if not c then UI.Msg(err, true) return end
+		sel = c.id
+		UI.Msg("Campaign started. Contact tracking is on. Use the campaign bar to post.")
+		UI.ShowCampaignBar()
+		ns.Changed()
+	end), p, X, -176)
+	local stop = At(Button(p, "End campaign", 120, function()
+		local c = M.EndCampaign(U.Now())
+		if c then UI.Msg("Campaign ended.") end
+		ns.Changed()
+	end), p, X + 146, -176)
+	At(Button(p, "Show / hide campaign bar", 190, function() UI.ToggleCampaignBar() end), p, X + 272, -176)
+	local report = At(Label(p, "", "GameFontHighlight", 500), p, X, -208)
+
+	function tab.Refresh()
+		local now = U.Now()
+		if not primed then
+			primed = true
+			SetEdit(minutes, tostring(DB.settings.campaignMinutes))
+			SetEdit(wait, tostring(DB.settings.postInterval))
+		end
+		-- Posts are ticked by default, including ones written after this tab was first opened.
+		for _, post in ipairs(DB.R.posts) do
+			if not known[post.id] then known[post.id] = true; chosen[post.id] = true end
+		end
+		local active = M.ActiveCampaign(now)
+		local items = {}
+		for i = #DB.R.campaigns, 1, -1 do items[#items + 1] = DB.R.campaigns[i] end
+		list:Set(items, function(c)
+			return c.name, (active and c.id == active.id) and "|cff40ff40running|r" or When(c.started)
+		end, sel or (active and active.id))
+		postList:Set(DB.R.posts, function(post)
+			return (chosen[post.id] and "|cff40ff40[x]|r  " or "[  ]  ") .. post.name, U.Shorten(post.text, 40)
+		end)
+		if active then start:Disable(); stop:Enable() else start:Enable(); stop:Disable() end
+
+		local rep = M.CampaignReport(sel or (active and active.id))
+		if rep then
+			report:SetText(campaignText(rep, now))
+		elseif #DB.R.posts == 0 then
+			report:SetText("Write a post on the Posts tab first. A campaign is a selling session built from your posts.")
+		else
+			report:SetText("A campaign is a selling session.\n\n1. Tick the posts to use, set how long to run and how long to wait between posts.\n2. Press Start campaign. Contact tracking switches on.\n3. A small campaign bar tells you when the next post is due. One click sends it.\n\nThe add-on never posts on its own: the game only allows posts that come from your click.\nWhispers, orders and income are then counted against the post that brought them.")
+		end
+	end
+end)
+
+-- ---------------------------------------------------------------- Products
+-- Recipes come from Mastercraft's own scan of your professions; prices from TradeSkillMaster,
+-- Auctionator or the vendor. This tab only reads that data.
+
+AddTab("Products", function(p, tab)
+	local sel
+	local prof = At(DynCycle(p, 130, function() sel = nil; tab.Refresh() end), p, 0, 0)
+	local cat = At(DynCycle(p, 170, function() tab.Refresh() end), p, 134, 0)
+	At(Label(p, "Sort by", "GameFontHighlightSmall"), p, 314, -6)
+	local sort = At(Cycle(p, ns.Catalog.SORTS, 110), p, 358, 0)
+	sort:HookScript("OnClick", function() tab.Refresh() end)
+	At(Label(p, "Find", "GameFontHighlightSmall"), p, 480, -6)
+	local search = At(Edit(p, 130), p, 514, -1)
+	search:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
+	local learned = At(Check(p, "Learned only"), p, 0, -24)
+	local mine = At(Check(p, "My products only"), p, 130, -24)
+	learned:SetScript("OnClick", function() tab.Refresh() end)
+	mine:SetScript("OnClick", function() tab.Refresh() end)
+	local list = At(List(p, 776, 280, function(item) sel = item.id; tab.Refresh() end), p, 0, -50)
+	local detail = At(Label(p, "", "GameFontHighlightSmall", 770), p, 4, -338)
+	local current
+
+	local toggle = At(Button(p, "Add to my products", 190, function()
+		if not current then return end
+		local key = ns.Catalog.Key(current.profession, current.name)
+		if DB.R.products[key] then
+			DB.R.products[key] = nil
+		else
+			DB.R.products[key] = { name = current.name, profession = current.profession, output = current.output }
+		end
+		ns.Changed()
+	end), p, 0, -446)
+	At(Button(p, "Refresh prices", 120, function() Price.Reset(); tab.Refresh() end), p, 196, -446)
+	local count = At(Label(p, "", "GameFontDisableSmall", 440), p, 326, -451)
+
+	local function source()
+		local db = rawget(_G, "MastercraftDB")
+		local guid = UnitGUID and UnitGUID("player")
+		local mine = type(db) == "table" and type(db.recipes) == "table" and guid and db.recipes[guid]
+		return type(mine) == "table" and mine or nil
+	end
+
+	local function money(v) return v > 0 and U.FormatMoney(v) or "?" end
+
+	-- Item id -> the profession that makes it, across every character Mastercraft has scanned.
+	local function craftedBy()
+		local out = {}
+		local db = rawget(_G, "MastercraftDB")
+		for _, profs in pairs(type(db) == "table" and type(db.recipes) == "table" and db.recipes or {}) do
+			for profName, data in pairs(type(profs) == "table" and profs or {}) do
+				for _, r in ipairs(type(data) == "table" and type(data.list) == "table" and data.list or {}) do
+					if r.output and not out[r.output] then out[r.output] = profName end
+				end
+			end
+		end
+		return out
+	end
+
+	function tab.Refresh()
+		current = nil
+		local src = source()
+		local profs = {}
+		for k, v in pairs(src or {}) do
+			if type(v) == "table" and type(v.list) == "table" then profs[#profs + 1] = k end
+		end
+		table.sort(profs)
+		prof:SetList(profs)
+		if #profs == 0 then
+			cat:SetList({ "All" })
+			list:Set({}, function() end)
+			toggle:Disable()
+			count:SetText("")
+			detail:SetText("No recipe list found for this character.\n\nThis tab reads the recipes that the Mastercraft add-on scans. Install and enable Mastercraft, open your\nprofession window once so it can scan, then come back here.")
+			return
+		end
+
+		local rows = ns.Catalog.Build(src[prof.value].list, prof.value, function(id) return (Price.GetByID(id)) end,
+			M.SoldCounts(), DB.R.products)
+		cat:SetList(ns.Catalog.Categories(rows))
+		local shown = ns.Catalog.Sort(ns.Catalog.Filter(rows, {
+			category = cat.value, learnedOnly = learned:GetChecked(), productsOnly = mine:GetChecked(), search = search:GetText(),
+		}), sort.value)
+		list:Set(shown, function(r)
+			return (r.product and "|cffffd100*|r " or "") .. r.name .. "  |cff888888" .. r.category .. (r.learned and "" or ", not learned") .. "|r",
+				("mats %s    sells %s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
+					r.sale > 0 and ((r.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(r.margin))) or "?", r.sold)
+		end, sel)
+		count:SetText(("%d of %d recipes shown. * marks your products. Prices: TradeSkillMaster, Auctionator or vendor."):format(#shown, #rows))
+
+		for _, r in ipairs(shown) do if r.id == sel then current = r end end
+		if not current then
+			toggle:Disable()
+			detail:SetText("Click a recipe to see its materials. Mark the things you sell as your products to find them quickly.")
+			return
+		end
+		toggle:Enable()
+		toggle:SetText(current.product and "Remove from my products" or "Add to my products")
+		local L = { ("|cffffd100%s|r  -  %s, %s%s"):format(current.name, current.category, current.learned and "learned" or "not learned",
+			current.outputQty > 1 and (", makes " .. current.outputQty) or "") }
+		local makers = craftedBy()
+		for _, g in ipairs(current.reagents) do
+			L[#L + 1] = ("   %dx %s    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID), money(g.each), money(g.each * g.qty),
+				makers[g.itemID] and ("    |cffffd100made by " .. makers[g.itemID] .. "|r") or "")
+		end
+		L[#L + 1] = ("Materials %s%s    Sells for %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),
+			current.unpriced > 0 and (" (" .. current.unpriced .. " without a price)") or "", money(current.sale),
+			current.sale > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?", current.sold)
+		detail:SetText(table.concat(L, "\n"))
+	end
+end)
+
 -- ---------------------------------------------------------------- Dashboard
 
 AddTab("Dashboard", function(p, tab)
-	local stats = At(Label(p, "", "GameFontHighlight", 370), p, 4, -4)
-	local X = 390
-	At(Label(p, "Settings"), p, X, -4)
-	At(Label(p, "Seconds between posts to the same public channel (min " .. DB.MIN_GAP_FLOOR .. ")", "GameFontHighlightSmall"), p, X, -28)
-	local gap = At(Edit(p, 50), p, X + 330, -24)
-	At(Label(p, "Tracking turns off this many minutes after your last post (0 = never)", "GameFontHighlightSmall"), p, X, -52)
-	local off = At(Edit(p, 50), p, X + 330, -48)
-	At(Label(p, "Channel names:  General", "GameFontHighlightSmall"), p, X, -76)
-	At(Label(p, "A follow-up trade joins the same order for this many minutes", "GameFontHighlightSmall"), p, X, -416)
-	local win = At(Edit(p, 50), p, X + 330, -412)
-	At(Label(p, "Days before someone you wrote to returns to the top of the list", "GameFontHighlightSmall"), p, X, -440)
-	local gapDays = At(Edit(p, 50), p, X + 330, -436)
-	local gen = At(Edit(p, 80), p, X + 140, -72)
-	At(Label(p, "Trade", "GameFontHighlightSmall"), p, X + 232, -76)
-	local trd = At(Edit(p, 80), p, X + 270, -72)
-	local remind = At(Check(p, "Show the Save button after changes"), p, X, -94)
-	local strangers = At(Check(p, "Offer to record sales to people who are not contacts yet"), p, X, -116)
-	At(Button(p, "Apply settings", 120, function()
-		local s = DB.settings
-		s.minGap = math.max(DB.MIN_GAP_FLOOR, math.floor(tonumber(gap:GetText()) or s.minGap))
-		s.trackAutoOff = math.max(0, math.floor(tonumber(off:GetText()) or s.trackAutoOff))
-		if U.Trim(gen:GetText()) ~= "" then s.generalName = U.Trim(gen:GetText()) end
-		if U.Trim(trd:GetText()) ~= "" then s.tradeName = U.Trim(trd:GetText()) end
-		s.saveReminder = remind:GetChecked() and true or false
-		s.orderWindow = math.max(1, math.floor(tonumber(win:GetText()) or s.orderWindow))
-		s.outreachGap = math.max(0, math.floor(tonumber(gapDays:GetText()) or s.outreachGap))
-		s.promptStrangers = strangers:GetChecked() and true or false
-		UI.Msg("Settings applied.")
-		tab.loaded = false
-		ns.Changed()
-	end), p, X, -142)
-
-	At(Label(p, "Backup"), p, X, -180)
-	local box = At(MultiEdit(p, 380, 120), p, X, -198)
+	local stats = At(Label(p, "", "GameFontHighlight", 400), p, 4, -4)
+	local X = 420
+	At(Label(p, "Backup"), p, X, -4)
+	local box = At(MultiEdit(p, 350, 110), p, X, -22)
 	At(Button(p, "Export", 80, function()
 		box.edit:SetText(M.Export())
 		box.edit:SetFocus()
 		box.edit:HighlightText()
 		UI.Msg("Press Ctrl+C to copy, then paste it somewhere safe.")
-	end), p, X, -322)
+	end), p, X, -138)
 	At(Button(p, "Import", 80, function()
 		local textIn = box.edit:GetText()
 		ns.Confirm("Merge the pasted export into your CRM data?", function()
@@ -862,30 +1058,27 @@ AddTab("Dashboard", function(p, tab)
 			UI.Msg(("Imported %d posts, %d contacts, %d orders."):format(added.posts, added.contacts, added.orders))
 			ns.Changed()
 		end)
-	end), p, X + 84, -322)
-	At(Button(p, "Save now", 80, function() ns.SaveNow() end), p, X + 168, -322)
-	At(Button(p, "Delete all data", 120, function()
+	end), p, X + 84, -138)
+	At(Button(p, "Save now", 80, function() ns.SaveNow() end), p, X + 168, -138)
+	At(Button(p, "Delete all data", 110, function()
 		ns.Confirm("Delete ALL WoW CRM data for this realm? This cannot be undone.", function()
 			DB.WipeRealm()
 			UI.Msg("All data for this realm deleted.")
 			ns.Changed()
 		end)
-	end), p, X + 260, -322)
-	At(Label(p, "Data is written to disk when you log out or press a Save button (it reloads the interface).", "GameFontDisableSmall", 380), p, X, -350)
+	end), p, X + 240, -138)
+	At(Label(p, "Data is written to disk when you log out or press a Save button (it reloads the interface).", "GameFontDisableSmall", 350), p, X, -166)
+	local hours = At(Label(p, "", "GameFontHighlightSmall", 350), p, X, -200)
 
 	function tab.Refresh()
-		if not tab.loaded then
-			tab.loaded = true
-			local s = DB.settings
-			SetEdit(gap, tostring(s.minGap))
-			SetEdit(off, tostring(s.trackAutoOff))
-			SetEdit(gen, s.generalName)
-			SetEdit(trd, s.tradeName)
-			SetEdit(win, tostring(s.orderWindow))
-			SetEdit(gapDays, tostring(s.outreachGap))
-			remind:SetChecked(s.saveReminder)
-			strangers:SetChecked(s.promptStrangers)
+		local H = { "|cffffd100By hour of day|r  (posts / leads / orders / income from posts made in that hour)" }
+		local hourRows = M.HourReport()
+		for _, r in ipairs(hourRows) do
+			H[#H + 1] = ("  %02d:00    %d / %d / %d / %s    |cff888888%s leads per post|r"):format(r.hour, r.sends, r.leads, r.orders,
+				U.FormatMoney(r.income), M.Rate(r.leads, r.sends))
 		end
+		if #hourRows == 0 then H[#H + 1] = "  nothing yet - this fills in as you post" end
+		hours:SetText(table.concat(H, "\n"))
 		local s = M.Stats()
 		local L = {
 			("|cffffd100Income (paid orders):|r %s"):format(U.FormatMoney(s.revenue)),
@@ -906,16 +1099,195 @@ AddTab("Dashboard", function(p, tab)
 		end
 		if #s.referrers == 0 then L[#L + 1] = "  none yet" end
 		L[#L + 1] = ""
-		L[#L + 1] = "|cffffd100Posts|r  (times posted / leads / gold + goods)"
+		L[#L + 1] = "|cffffd100Posts, all time|r  (times posted / leads / gold + goods)"
 		for i = 1, math.min(6, #s.posts) do
 			local ps = s.posts[i]
-			L[#L + 1] = ("  %s:  %d / %d / %s + %s"):format(U.Shorten(ps.name, 24), ps.sends, ps.leads, U.FormatMoney(ps.gold), U.FormatMoney(ps.goods))
+			L[#L + 1] = ("  %s:  %d / %d / %s + %s   |cff888888%s leads per post|r"):format(U.Shorten(ps.name, 20), ps.sends, ps.leads,
+				U.FormatMoney(ps.gold), U.FormatMoney(ps.goods), M.Rate(ps.leads, ps.sends))
 			if #ps.sold > 0 then L[#L + 1] = "      sold: " .. M.Summary(ps.sold, 54) end
 		end
 		if #s.posts == 0 then L[#L + 1] = "  none yet" end
 		stats:SetText(table.concat(L, "\n"))
 	end
 end)
+
+-- ---------------------------------------------------------------- Options
+
+AddTab("Options", function(p, tab)
+	local fields, y = {}, 0
+	local function header(text)
+		At(Label(p, text), p, 0, y - 4)
+		y = y - 24
+	end
+	local function number(key, text, min)
+		At(Label(p, text, "GameFontHighlightSmall"), p, 12, y - 4)
+		fields[#fields + 1] = { key = key, min = min, edit = At(Edit(p, 60), p, 560, y) }
+		y = y - 24
+	end
+	local function word(key, text)
+		At(Label(p, text, "GameFontHighlightSmall"), p, 12, y - 4)
+		fields[#fields + 1] = { key = key, text = true, edit = At(Edit(p, 120), p, 560, y) }
+		y = y - 24
+	end
+	local function check(key, text)
+		fields[#fields + 1] = { key = key, check = At(Check(p, text), p, 8, y) }
+		y = y - 24
+	end
+
+	header("Posting")
+	number("minGap", "Seconds between posts to the same public channel when no campaign is running (minimum " .. DB.MIN_GAP_FLOOR .. ")", DB.MIN_GAP_FLOOR)
+	word("generalName", "Name of the General channel")
+	word("tradeName", "Name of the Trade channel")
+	header("Campaigns")
+	number("campaignMinutes", "Usual length of a campaign, in minutes", 1)
+	number("postInterval", "Usual wait between posts to the same channel during a campaign, in minutes", 1)
+	check("campaignSound", "Play a sound when the next campaign post is due")
+	header("Leads and orders")
+	number("trackAutoOff", "Contact tracking turns off this many minutes after your last post (0 = never)", 0)
+	number("orderWindow", "A follow-up trade joins the same order for this many minutes", 1)
+	check("promptStrangers", "Offer to record sales to people who are not contacts yet")
+	header("Follow-up letters")
+	number("outreachGap", "Days before someone you wrote to returns to the top of the follow-up list", 0)
+	header("Saving")
+	check("saveReminder", "Show the Save button after changes")
+
+	local function load()
+		for _, f in ipairs(fields) do
+			local v = DB.settings[f.key]
+			if f.check then f.check:SetChecked(v and true or false) else SetEdit(f.edit, tostring(v)) end
+		end
+	end
+
+	At(Button(p, "Apply options", 130, function()
+		local s = DB.settings
+		for _, f in ipairs(fields) do
+			if f.check then
+				s[f.key] = f.check:GetChecked() and true or false
+			elseif f.text then
+				local v = U.Trim(f.edit:GetText())
+				if v ~= "" then s[f.key] = v end
+			else
+				local v = tonumber(f.edit:GetText())
+				if v then s[f.key] = math.max(f.min or 0, math.floor(v)) end
+			end
+		end
+		load()
+		UI.Msg("Options applied.")
+		ns.Changed()
+	end), p, 0, y - 10)
+
+	function tab.Refresh()
+		if not tab.loaded then tab.loaded = true; load() end
+	end
+end)
+
+-- ---------------------------------------------------------------- campaign bar
+-- Shows what is due next in the running campaign. The button is the only thing that posts.
+
+local cbar
+local wasDue, lastCampaign = false, nil
+
+local function alertDue(post, target)
+	if DB.settings.campaignSound and PlaySound then
+		pcall(PlaySound, (SOUNDKIT and SOUNDKIT.READY_CHECK) or 8960, "Master")
+	end
+	ns.Print(("campaign: time to post |cffffff00%s|r to %s. Click the campaign bar."):format(post.name, ns.TARGET_LABEL[target]))
+end
+
+local function buildCampaignBar()
+	cbar = Box(UIParent, 270, 78, 0.9)
+	local pos = DB.settings.campaignBarPos
+	if pos then cbar:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else cbar:SetPoint("TOP", 0, -180) end
+	cbar:SetFrameStrata("MEDIUM")
+	cbar:EnableMouse(true)
+	cbar:SetMovable(true)
+	cbar:SetClampedToScreen(true)
+	cbar:RegisterForDrag("LeftButton")
+	cbar:SetScript("OnDragStart", function(self) self:StartMoving() end)
+	cbar:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		local point, _, rel, x, y = self:GetPoint()
+		DB.settings.campaignBarPos = { point, rel, x, y }
+	end)
+	cbar.title = At(Label(cbar, "", "GameFontNormalSmall", 230), cbar, 10, -9)
+	local close = CreateFrame("Button", nil, cbar, "UIPanelCloseButton")
+	close:SetPoint("TOPRIGHT", 2, 2)
+	close:SetScript("OnClick", function() cbar:Hide() end)
+	cbar.post = At(Button(cbar, "", 250, function()
+		local ok, res = Chat.CampaignPost()
+		if not ok then ns.Print(res) end
+		UI.CampaignTick()
+	end), cbar, 10, -28)
+	cbar.post:SetHeight(30)
+	cbar.info = At(Label(cbar, "", "GameFontDisableSmall", 250), cbar, 10, -62)
+	cbar:Hide()
+end
+
+-- Runs once a second: closes a campaign whose time is up, sounds the "due" alert once,
+-- and keeps the bar's text current.
+function UI.CampaignTick()
+	if not ns.ready then return end
+	local now = U.Now()
+	local c, finished = M.ActiveCampaign(now)
+	if finished then
+		local rep = M.CampaignReport(finished.id)
+		ns.Print(("campaign \"%s\" finished: posted %d times, %d leads, %d orders, %s gold + %s in goods so far."):format(
+			finished.name, rep.sends, rep.leads, rep.orders, U.FormatMoney(rep.gold), U.FormatMoney(rep.goods)))
+		wasDue = false
+		ns.Changed(true)
+	end
+	if not c then
+		if cbar and cbar:IsShown() then
+			cbar.title:SetText("No campaign running")
+			cbar.post:SetText("Start one on the Campaigns tab")
+			cbar.post:Disable()
+			cbar.info:SetText("")
+		end
+		lastCampaign = nil
+		return
+	end
+	if lastCampaign ~= c.id then lastCampaign, wasDue = c.id, false end
+
+	local post, target, wait = M.CampaignNext(c, Chat.Available, now)
+	local due = post ~= nil
+	if due and not wasDue then alertDue(post, target) end
+	wasDue = due
+
+	if not cbar or not cbar:IsShown() then return end
+	cbar.title:SetText(("%s  -  %s left"):format(U.Shorten(c.name, 22), M.Clock(c.ends - now)))
+	if due then
+		cbar.post:SetText(U.Shorten(post.name, 20) .. " > " .. ns.TARGET_LABEL[target])
+		cbar.post:Enable()
+		cbar.post:LockHighlight()
+		cbar.info:SetText("Due now. One click sends this one message.")
+	else
+		cbar.post:SetText(wait and ("Next post in " .. M.Clock(wait)) or "No channel available here")
+		cbar.post:Disable()
+		cbar.post:UnlockHighlight()
+		cbar.info:SetText(wait and "Waiting out the gap so you are not spamming." or "Join General or Trade, or move to a city.")
+	end
+end
+
+function UI.ShowCampaignBar()
+	if not ns.ready then return end
+	if not cbar then buildCampaignBar() end
+	cbar:Show()
+	UI.CampaignTick()
+end
+
+function UI.ToggleCampaignBar()
+	if cbar and cbar:IsShown() then cbar:Hide() else UI.ShowCampaignBar() end
+end
+
+do
+	local ticker = CreateFrame("Frame")
+	local elapsed = 0
+	ticker:SetScript("OnUpdate", function(_, dt)
+		elapsed = elapsed + dt
+		if elapsed >= 1 then elapsed = 0; UI.CampaignTick() end
+	end)
+	UI.campaignTicker = ticker
+end
 
 -- ---------------------------------------------------------------- main window
 
@@ -973,7 +1345,7 @@ local function build()
 
 	for i, name in ipairs(tabOrder) do
 		local tab = tabs[name]
-		tab.button = At(Button(main, name, 100, function() UI.Show(name) end), main, 12 + (i - 1) * 104, -66)
+		tab.button = At(Button(main, name, 84, function() UI.Show(name) end), main, 12 + (i - 1) * 86, -66)
 		tab.panel = CreateFrame("Frame", nil, main)
 		tab.panel:SetPoint("TOPLEFT", 12, -98)
 		tab.panel:SetPoint("BOTTOMRIGHT", -12, 30)
@@ -997,7 +1369,7 @@ end
 function UI.Show(name, selection)
 	if not ns.ready then return end
 	if not main then build() end
-	name = name or current or "Posts"
+	name = name or current or "Campaigns"
 	if current ~= name then UI.Msg("") end
 	current = name
 	for _, n in ipairs(tabOrder) do
@@ -1118,12 +1490,21 @@ end
 
 -- ---------------------------------------------------------------- wiring
 
+-- The tabs follow the funnel: campaign, post, lead, contact, order, follow-up, then the tools.
+do
+	local order = { "Campaigns", "Posts", "Leads", "Contacts", "Orders", "Mail", "Products", "Dashboard", "Options" }
+	for i = #tabOrder, 1, -1 do tabOrder[i] = nil end
+	for i, n in ipairs(order) do tabOrder[i] = n end
+end
+
+
 table.insert(ns.listeners, function()
 	UI.Refresh()
 	refreshBar()
 end)
 
 ns.On("PLAYER_LOGIN", function()
+	if M.ActiveCampaign(U.Now()) then UI.ShowCampaignBar() end
 	if DB.settings and DB.settings.barShown then
 		buildBar()
 		refreshBar()

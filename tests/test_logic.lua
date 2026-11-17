@@ -1,6 +1,6 @@
 -- Tests for the files that hold no game API: Util, DB, Model.
 local ns = {}
-for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua" }) do
+for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua", "Catalog.lua" }) do
 	assert(loadfile(f))("WoWCRM", ns)
 end
 local U, DB, M = ns.Util, ns.DB, ns.Model
@@ -324,6 +324,98 @@ DB.Init(older, "Old")
 eq(#DB.R.mailTemplates, 4, "follow-up templates added to existing data")
 DB.Init(older, "Old")
 eq(#DB.R.mailTemplates, 4, "and only once")
+
+-- campaigns: rotation, the wait between posts, and the funnel per post
+fresh()
+local pA = M.SavePost(nil, "A", "post a", { TRADE = true })
+local pB = M.SavePost(nil, "B", "post b", { TRADE = true, SAY = true })
+_, err = M.StartCampaign("x", {}, 60, 5, T)
+eq(err ~= nil, true, "campaign needs a post")
+_, err = M.StartCampaign("x", { pA.id }, 0, 5, T)
+eq(err ~= nil, true, "campaign needs a length")
+_, err = M.StartCampaign("x", { pA.id }, 60, 0, T)
+eq(err ~= nil, true, "campaign needs a wait of at least a minute")
+local camp = M.StartCampaign("Evening", { pA.id, pB.id }, 60, 5, T)
+eq(camp.status, "running", "campaign running")
+eq(DB.R.tracking.on, true, "starting a campaign turns tracking on")
+local np, nt = M.CampaignNext(camp, ALL, T)
+eq(np.id, pA.id, "first post goes first")
+eq(nt, "TRADE", "to its channel")
+M.RecordSend(pA, "TRADE", T, "City")
+M.CampaignAdvance(camp, pA, ALL, T)
+eq(camp.turn, 2, "next post gets its turn")
+np, nt = M.CampaignNext(camp, ALL, T)
+eq(np.id, pB.id, "second post is next")
+eq(nt, "SAY", "to a channel that is not waiting")
+M.RecordSend(pB, "SAY", T, "City")
+M.CampaignAdvance(camp, pB, ALL, T)
+local nwait
+np, nt, nwait = M.CampaignNext(camp, ALL, T + 60)
+eq(np, nil, "nothing due while channels wait")
+eq(nwait, 240, "the campaign's 5 minute wait applies, not the 60 second one")
+eq(M.GapRemaining("TRADE", T + 60), 240, "channel gap follows the campaign")
+np, nt = M.CampaignNext(camp, ALL, T + 300)
+eq(np.id, pA.id, "after the wait the rotation continues")
+local cl = M.OnWhisper("Zed-Stormrage", "bags?", T + 10)
+eq(cl.campaign, camp.id, "lead belongs to the campaign")
+eq(cl.post, pB.id, "and to the post that was last sent")
+local co = M.AddTrade(nil, "Zed-Stormrage", { given = { { name = "Bag", qty = 1 } }, gold = 10000 }, T + 20)
+eq(co.campaign, camp.id, "order belongs to the campaign")
+eq(co.post, pB.id, "and to the post that brought the lead")
+local rp = M.CampaignReport(camp.id)
+eq(rp.sends, 2, "campaign sends")
+eq(rp.leads, 1, "campaign leads")
+eq(rp.orders, 1, "campaign orders")
+eq(rp.gold, 10000, "campaign gold")
+eq(rp.posts[1].sends, 1, "sends per post")
+eq(rp.posts[1].leads, 0, "a post with no leads shows none")
+eq(rp.posts[2].leads, 1, "leads per post")
+eq(rp.posts[2].sold[1].name, "Bag", "items sold per post")
+eq(M.TrackingState(T + 40 * 60), true, "tracking stays on for the whole campaign")
+eq(M.SoldCounts().Bag, 1, "sold counts by item")
+local hr
+for _, r in ipairs(M.HourReport()) do if r.hour == U.Hour(T) then hr = r end end
+eq(hr.sends, 2, "posts counted in their hour")
+eq(hr.leads, 1, "leads counted in the hour of the post")
+eq(hr.orders, 1, "orders counted in the hour of the post")
+eq(hr.income, 10000, "income counted in the hour of the post")
+local live, done = M.ActiveCampaign(T + 3600)
+eq(live, nil, "campaign stops when its time is up")
+eq(done.id, camp.id, "and reports that it just finished")
+eq(camp.status, "ended", "campaign marked ended")
+eq(M.GapRemaining("TRADE", T + 3600 + 30), 0, "normal gap applies again afterwards")
+eq(M.Rate(1, 2), "0.5", "leads per post")
+eq(M.Rate(1, 2, true), "50%", "share who ordered")
+eq(M.Rate(1, 0), "-", "no rate without posts")
+eq(M.Clock(185), "3:05", "countdown")
+eq(M.Clock(3725), "1:02:05", "long countdown")
+
+-- product list: costs, margins, filters and sorting
+local Cat = ns.Catalog
+local cost = { [1] = 100, [2] = 0, [10] = 1000, [11] = 300 }
+local prows = Cat.Build({
+	{ id = 1, name = "Silk Bag", category = "Bags", learned = true, output = 10, outputQty = 1, reagents = { { itemID = 1, qty = 4 } } },
+	{ id = 2, name = "Reagent Bag", category = "Specialty Bags", learned = false, output = 11, reagents = { { itemID = 1, qty = 2 }, { itemID = 2, qty = 1 } } },
+	{ id = 3, name = "Bolt", category = "", learned = true, reagents = {} },
+}, "Tailoring", function(i) return cost[i] or 0 end, { ["Silk Bag"] = 3 }, { ["Tailoring|Silk Bag"] = true })
+eq(#prows, 3, "rows built")
+eq(prows[1].mats, 400, "materials cost")
+eq(prows[1].sale, 1000, "sale value")
+eq(prows[1].margin, 600, "margin")
+eq(prows[1].sold, 3, "times sold")
+eq(prows[1].product, true, "marked as my product")
+eq(prows[2].unpriced, 1, "material without a price is counted")
+eq(prows[3].category, "Other", "missing category")
+eq(table.concat(Cat.Categories(prows), ","), "All,Bags,Other,Specialty Bags", "categories")
+eq(#Cat.Filter(prows, { learnedOnly = true }), 2, "learned only")
+eq(#Cat.Filter(prows, { category = "Specialty Bags" }), 1, "by category")
+eq(#Cat.Filter(prows, { search = "BAG" }), 2, "search ignores case")
+eq(#Cat.Filter(prows, { productsOnly = true }), 1, "my products only")
+eq(Cat.Sort(Cat.Filter(prows, {}), "margin")[1].name, "Silk Bag", "sort by margin")
+eq(Cat.Sort(Cat.Filter(prows, {}), "mats cost")[1].name, "Bolt", "sort by materials cost, cheapest first")
+eq(Cat.Sort(Cat.Filter(prows, {}), "sale value")[1].name, "Silk Bag", "sort by sale value")
+eq(Cat.Sort(Cat.Filter(prows, {}), "name")[1].name, "Bolt", "sort by name")
+eq(Cat.Sort(Cat.Filter(prows, {}), "category")[3].name, "Reagent Bag", "sort by category")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

@@ -38,6 +38,14 @@ A typical session:
 - **The quick-post bar's big button** (`/crm bar`, or right-click the minimap button) takes turns: next post, next channel. General, then Trade, then General again. Outside a city, where there is no Trade, it uses General. Tick Yell on the bar to include it. While it waits, the button counts down.
 - **Whispers are not held back.** Whispering a post to someone is private and has no pause.
 
+## Posting from more than one character
+
+Each post belongs to the character whose voice it is written in, or to any character. Buttons only offer the current character's posts, and a post written for someone else is never sent. "Copy this post for me" on the Posts tab starts a copy you can reword for the character you are on.
+
+## Follow-ups when someone comes online
+
+Press **Follow up when online** on a lead, or **Follow up** on a contact. WoW CRM adds them to the friends list of the character you are playing (they are not told), and alerts you with a sound and a raid-warning message when they log in, or when they speak in a channel or near you. `/crm follow` lists everyone you owe a reply; **Done** takes them off the list and off the friends list again. On another character, type `/crm watch` once to put the same people on its friends list.
+
 ## Getting to WoW CRM
 
 `/crm`, the minimap button (drag it around the edge; hide it on the Options tab), or the game's Settings > AddOns > WoW CRM. Drag the window's bottom-right corner to make it bigger or smaller.

@@ -266,8 +266,12 @@ SlashCmdList["WOWCRM"] = function(msg)
 		ns.Notify()
 	elseif cmd == "probe" then
 		ns.Chat.Probe()
+	elseif cmd == "follow" then
+		ns.UI.ToggleFollowUps()
+	elseif cmd == "watch" then
+		ns.UI.WatchFollowUps(true)
 	else
-		ns.Print("commands: /crm, /crm campaign, /crm bar, /crm track [on|off], /crm add Name, /crm probe")
+		ns.Print("commands: /crm, /crm follow, /crm watch, /crm campaign, /crm bar, /crm track [on|off], /crm add Name, /crm probe")
 	end
 end
 

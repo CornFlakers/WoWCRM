@@ -227,6 +227,13 @@ AddTab("Posts", function(p, tab)
 		UI.Msg(("%d post%s now belong to %s."):format(n, n == 1 and "" or "s", ownerText(M.me)))
 		ns.Changed()
 	end), p, 0, -346)
+	At(Button(p, "Copy this post for me", 250, function()
+		local post, err = M.CopyPost(sel)
+		if not post then UI.Msg(err, true) return end
+		UI.Msg("Copied as " .. post.name .. ". Change the wording to your own voice, then Save post.")
+		ns.Changed()
+		tab.Select(post.id)
+	end), p, 0, -372)
 	At(Label(p, "Message"), p, X, -30)
 	local counter = At(Label(p, "", "GameFontHighlightSmall"), p, X + 70, -31)
 	local text = At(MultiEdit(p, 500, 84), p, X, -48)
@@ -441,6 +448,14 @@ AddTab("Leads", function(p, tab)
 			local l = lead()
 			if l then UI.Show("Posts", { to = l.contact }) end
 		end), p, X + 268, -316),
+		At(Button(p, "Follow up when online", 190, function()
+			local l = lead()
+			if not l then return end
+			M.SetFollowUp(l.contact, U.Shorten(l.text, 80), U.Now())
+			UI.WatchFollowUps()
+			UI.Msg("You will be alerted when " .. Name(l.contact) .. " is online. The list is under /crm follow.")
+			ns.Changed()
+		end), p, X, -342),
 	}
 	toggle:SetScript("OnClick", function()
 		showClosed = not showClosed
@@ -552,6 +567,19 @@ AddTab("Contacts", function(p, tab)
 				ns.Changed()
 			end)
 		end), p, X + 352, -428),
+		At(Button(p, "Follow up", 84, function()
+			local c = sel and M.GetContact(sel)
+			if not c then return end
+			if c.followUp then
+				M.ClearFollowUp(c.key)
+				UI.Msg("No longer following up with " .. Name(c.key) .. ".")
+			else
+				M.SetFollowUp(c.key, c.notes:match("[^\n]*") or "", U.Now())
+				UI.Msg("You will be alerted when " .. Name(c.key) .. " is online. The list is under /crm follow.")
+			end
+			UI.WatchFollowUps()
+			ns.Changed()
+		end), p, X + 426, -428),
 	}
 
 	function tab.Select(key) sel = key; load(); tab.Refresh() end
@@ -574,6 +602,7 @@ AddTab("Contacts", function(p, tab)
 		end, sel)
 		local c = sel and M.GetContact(sel)
 		for _, b in ipairs(buttons) do if c then b:Enable() else b:Disable() end end
+		buttons[#buttons]:SetText(c and c.followUp and "Stop follow-up" or "Follow up")
 		if not c then
 			orders:Set({}, function() end)
 			stats:SetText("Type a name and press Add, or target a player and press Target.")
@@ -587,8 +616,9 @@ AddTab("Contacts", function(p, tab)
 		local ltv, paid, all, ltvGold, ltvGoods = M.LTV(c.key)
 		local n, rev = M.Referrals(c.key)
 		local src = c.sourcePost and M.GetPost(c.sourcePost)
-		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s     Follow-ups sent: %d, last %s"):format(
-			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-", c.outreach or 0, M.Ago(c.lastOutreach, U.Now())))
+		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s     Follow-ups sent: %d, last %s%s"):format(
+			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-", c.outreach or 0, M.Ago(c.lastOutreach, U.Now()),
+			c.followUp and ("\n|cffffd100Following up|r since " .. M.Ago(c.followUp.since, U.Now()) .. ((c.followUp.note or "") ~= "" and (": " .. c.followUp.note) or "")) or ""))
 	end
 end)
 
@@ -1871,6 +1901,196 @@ local function registerSettings()
 	end
 end
 
+-- ---------------------------------------------------------------- follow-ups: online alerts
+-- The game tells an add-on when someone on your friends list logs in or out, so contacts you
+-- follow up with are added to the friends list of the character you are playing (the other
+-- player is not told). They are also noticed when they speak in a channel or near you.
+
+local friendOnline = {} -- contact key -> online, as last reported by the friends list
+local fwin
+local FW_MAX = 10
+
+local function friendsList()
+	local out = {}
+	if C_FriendList and C_FriendList.GetNumFriends then
+		for i = 1, C_FriendList.GetNumFriends() or 0 do
+			local info = C_FriendList.GetFriendInfoByIndex(i)
+			if info and info.name then out[#out + 1] = { name = info.name, online = info.connected and true or false } end
+		end
+	elseif GetNumFriends and GetFriendInfo then
+		for i = 1, GetNumFriends() or 0 do
+			local name, _, _, _, connected = GetFriendInfo(i)
+			if name then out[#out + 1] = { name = name, online = connected and true or false } end
+		end
+	end
+	return out
+end
+
+local function friendKeys()
+	local keys = {}
+	for _, f in ipairs(friendsList()) do
+		local key = U.NormName(f.name, DB.realm)
+		if key then keys[key] = f end
+	end
+	return keys
+end
+
+-- Follow-ups not yet on this character's friends list.
+function UI.UnwatchedFollowUps()
+	local watching, friends, n = M.Watching(), friendKeys(), 0
+	for _, c in ipairs(M.OnlineFollowUps()) do
+		if not watching[c.key] and not friends[c.key] then n = n + 1 end
+	end
+	return n
+end
+
+-- Puts this character's friends list in step with the follow-ups: adds new ones, and removes the
+-- entries WoW CRM added for people no longer followed up. Real friends are never touched.
+-- Runs from a click or a typed command.
+function UI.WatchFollowUps(verbose)
+	local add = (C_FriendList and C_FriendList.AddFriend) or AddFriend
+	local remove = (C_FriendList and C_FriendList.RemoveFriend) or RemoveFriend
+	if not add then return end
+	local watching, friends, wanted = M.Watching(), friendKeys(), {}
+	local added, removed = 0, 0
+	for _, c in ipairs(M.OnlineFollowUps()) do
+		wanted[c.key] = true
+		if not watching[c.key] and not friends[c.key] then
+			add(Name(c.key), "WoW CRM follow-up")
+			watching[c.key] = true
+			added = added + 1
+		end
+	end
+	for key in pairs(watching) do
+		if not wanted[key] then
+			if remove then remove(Name(key)) end
+			watching[key] = nil
+			removed = removed + 1
+		end
+	end
+	if verbose then
+		ns.Print(("follow-ups on this character's friends list: %d added, %d removed."):format(added, removed))
+	end
+	UI.RefreshFollowUps()
+end
+
+local function alert(c, how)
+	local who = Name(c.key)
+	local note = (c.followUp.note or "") ~= "" and ("  You noted: " .. c.followUp.note) or ""
+	ns.Print(("|cffffff00%s is online|r (%s). Time to follow up.%s"):format(who, how, note))
+	if RaidNotice_AddMessage and RaidWarningFrame then
+		RaidNotice_AddMessage(RaidWarningFrame, "WoW CRM: " .. who .. " is online - follow up!",
+			(ChatTypeInfo and ChatTypeInfo["RAID_WARNING"]) or { r = 1, g = 0.8, b = 0 })
+	end
+	if PlaySound then pcall(PlaySound, (SOUNDKIT and SOUNDKIT.RAID_WARNING) or 8959, "Master") end
+	UI.ShowFollowUps()
+	ns.Changed(true)
+end
+
+ns.On("FRIENDLIST_UPDATE", function()
+	if not ns.ready then return end
+	local now = U.Now()
+	for key, f in pairs(friendKeys()) do
+		local c = M.GetContact(key)
+		if c then
+			local was = friendOnline[key]
+			friendOnline[key] = f.online
+			if f.online and was ~= true and c.followUp then
+				if M.SeenOnline(key, now, was == nil and "online" or "came online") then
+					alert(c, was == nil and "already online" or "just logged in")
+				end
+			end
+		end
+	end
+	UI.RefreshFollowUps()
+end)
+
+local function sighted(how)
+	return function(_, sender)
+		if not ns.ready or type(sender) ~= "string" or (issecretvalue and issecretvalue(sender)) then return end
+		local key = U.NormName(sender, DB.realm)
+		local c = key and M.GetContact(key)
+		if c and M.SeenOnline(key, U.Now(), how) then alert(c, how) end
+	end
+end
+ns.On("CHAT_MSG_CHANNEL", sighted("talking in a channel"))
+ns.On("CHAT_MSG_SAY", sighted("near you"))
+ns.On("CHAT_MSG_YELL", sighted("near you"))
+ns.On("CHAT_MSG_WHISPER", sighted("whispering you"))
+
+function UI.RefreshFollowUps()
+	if not fwin or not fwin:IsShown() then return end
+	local list, now = M.OnlineFollowUps(), U.Now()
+	for i = 1, FW_MAX do
+		local row, c = fwin.rows[i], list[i]
+		if c then
+			row.key = c.key
+			local status
+			if friendOnline[c.key] then status = "|cff40ff40online|r"
+			elseif c.lastSeen and now - c.lastSeen < 600 then status = "|cff40ff40seen " .. M.Ago(c.lastSeen, now) .. "|r"
+			elseif friendOnline[c.key] == false then status = "|cff888888offline|r"
+			else status = "|cff888888not watched|r" end
+			row.name:SetText(U.Shorten(Name(c.key), 18) .. "  " .. status)
+			row.note:SetText(U.Shorten(((c.followUp.note or "") ~= "" and c.followUp.note or "no note") .. "  (since " .. M.Ago(c.followUp.since, now) .. ")", 60))
+			row.name:Show(); row.note:Show(); row.whisper:Show(); row.done:Show()
+		else
+			row.name:Hide(); row.note:Hide(); row.whisper:Hide(); row.done:Hide()
+		end
+	end
+	local n = #list
+	local unwatched = UI.UnwatchedFollowUps()
+	fwin.info:SetText(n == 0 and "Nobody to follow up with. Use Follow up on the Leads or Contacts tab."
+		or (unwatched > 0 and ("|cffff9060" .. unwatched .. " not on this character's friends list yet:|r press Watch so you are told when they log in.")
+		or "You will be alerted here when any of them is online."))
+	fwin:SetHeight(92 + math.max(1, math.min(n, FW_MAX)) * 36)
+end
+
+local function buildFollowUps()
+	fwin = Box(UIParent, 330, 140, 0.92)
+	fwin:SetPoint("RIGHT", -120, 60)
+	fwin:SetFrameStrata("MEDIUM")
+	fwin:EnableMouse(true)
+	fwin:SetMovable(true)
+	fwin:SetClampedToScreen(true)
+	fwin:RegisterForDrag("LeftButton")
+	fwin:SetScript("OnDragStart", function(self) self:StartMoving() end)
+	fwin:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+	At(Label(fwin, "Follow-ups", "GameFontNormal"), fwin, 12, -10)
+	local close = CreateFrame("Button", nil, fwin, "UIPanelCloseButton")
+	close:SetPoint("TOPRIGHT", 2, 2)
+	At(Button(fwin, "Watch", 70, function() UI.WatchFollowUps(true) end), fwin, 240, -30)
+	fwin.info = At(Label(fwin, "", "GameFontHighlightSmall", 220), fwin, 12, -32)
+	fwin.rows = {}
+	for i = 1, FW_MAX do
+		local y = -76 - (i - 1) * 36
+		local row = {}
+		row.name = At(Button(fwin, "", 180, function(self)
+			if row.key then UI.Show("Contacts", row.key) end
+		end), fwin, 10, y)
+		row.whisper = At(Button(fwin, "Whisper", 66, function() if row.key then Chat.Whisper(row.key) end end), fwin, 192, y)
+		row.done = At(Button(fwin, "Done", 56, function()
+			if not row.key then return end
+			M.ClearFollowUp(row.key)
+			UI.WatchFollowUps()
+			ns.Changed()
+		end), fwin, 262, y)
+		row.note = At(Label(fwin, "", "GameFontDisableSmall", 300), fwin, 14, y - 22)
+		fwin.rows[i] = row
+	end
+	fwin:Hide()
+end
+
+function UI.ShowFollowUps()
+	if not ns.ready then return end
+	if not fwin then buildFollowUps() end
+	fwin:Show()
+	UI.RefreshFollowUps()
+end
+
+function UI.ToggleFollowUps()
+	if fwin and fwin:IsShown() then fwin:Hide() else UI.ShowFollowUps() end
+end
+
 -- ---------------------------------------------------------------- copyable link
 -- Add-ons cannot open a web browser, so web addresses are shown ready to copy.
 
@@ -1942,6 +2162,12 @@ end)
 ns.On("PLAYER_LOGIN", function()
 	buildMinimap()
 	registerSettings()
+	if C_FriendList and C_FriendList.ShowFriends then pcall(C_FriendList.ShowFriends) end
+	local unwatched = UI.UnwatchedFollowUps()
+	if unwatched > 0 then
+		ns.Print(("%d follow-up%s %s not on this character's friends list, so you would not be told when they log in. Type |cffffff00/crm watch|r to add them."):format(
+			unwatched, unwatched == 1 and "" or "s", unwatched == 1 and "is" or "are"))
+	end
 	if M.ActiveCampaign(U.Now()) then UI.ShowCampaignBar() end
 	if DB.settings and DB.settings.barShown then
 		buildBar()

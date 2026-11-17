@@ -45,6 +45,15 @@ function M.PostsFor()
 	return out
 end
 
+-- A copy of any post (another character's, say) that belongs to the character playing now.
+function M.CopyPost(id)
+	local src = M.GetPost(id)
+	if not src then return nil, "Pick a post to copy." end
+	local targets = {}
+	for k in pairs(src.targets) do targets[k] = true end
+	return M.SavePost(nil, src.name .. " (" .. (U.SplitKey(M.me or "me")) .. ")", src.text, targets, M.me)
+end
+
 function M.UnassignedPosts()
 	local n = 0
 	for _, p in ipairs(R().posts) do if p.owner == nil then n = n + 1 end end
@@ -945,6 +954,58 @@ function M.Rate(part, whole, percent)
 	if not whole or whole == 0 then return "-" end
 	if percent then return ("%d%%"):format(math.floor(part / whole * 100 + 0.5)) end
 	return ("%.1f"):format(part / whole)
+end
+
+-- ---------------------------------------------------------------- follow-ups when online
+-- A contact you promised to get back to. When they are seen online (their friends-list entry
+-- shows them logging in, or they speak in chat near you or in a channel), you are alerted, at
+-- most once every half hour per person, so you can switch to the right character and close.
+
+M.ALERT_EVERY = 30 * 60
+
+function M.SetFollowUp(key, note, now)
+	local c = M.GetContact(key)
+	if not c then return nil end
+	c.followUp = { since = now, note = U.Trim(note), by = M.me }
+	return c.followUp
+end
+
+function M.ClearFollowUp(key)
+	local c = M.GetContact(key)
+	if c then c.followUp = nil end
+end
+
+-- Oldest promise first.
+function M.OnlineFollowUps()
+	local out = {}
+	for _, c in pairs(R().contacts) do
+		if c.followUp then out[#out + 1] = c end
+	end
+	table.sort(out, function(a, b)
+		if a.followUp.since ~= b.followUp.since then return a.followUp.since < b.followUp.since end
+		return a.key < b.key
+	end)
+	return out
+end
+
+-- Contacts this character added to its friends list for follow-ups: key -> true.
+function M.Watching(char)
+	local r = R()
+	char = char or M.me or "?"
+	r.watching = r.watching or {}
+	r.watching[char] = r.watching[char] or {}
+	return r.watching[char]
+end
+
+-- A contact was seen online. Returns true when it is time to alert about a follow-up.
+function M.SeenOnline(key, now, how)
+	local c = M.GetContact(key)
+	if not c then return false end
+	c.lastSeen, c.lastSeenHow = now, how
+	if not c.followUp then return false end
+	if c.followUp.alertedAt and now - c.followUp.alertedAt < M.ALERT_EVERY then return false end
+	c.followUp.alertedAt = now
+	return true
 end
 
 -- ---------------------------------------------------------------- follow-up outreach

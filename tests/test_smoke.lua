@@ -124,6 +124,15 @@ function ChatFrame_OpenChat(text) opened[#opened + 1] = text end
 function GetItemCount(id, withBank) return id == 14048 and (withBank and 20 or 12) or 0 end
 BrotherBags = { forever = { ["Bag Makers*"] = { { items = { "14048;25" } } } } }
 function PlaySound() end
+local friends, raidWarnings = {}, {}
+C_FriendList = {
+	AddFriend = function(name, note) friends[#friends + 1] = { name = name, note = note, connected = false } end,
+	RemoveFriend = function(name) for i = #friends, 1, -1 do if friends[i].name == name then table.remove(friends, i) end end end,
+	GetNumFriends = function() return #friends end,
+	GetFriendInfoByIndex = function(i) return friends[i] end,
+}
+RaidWarningFrame = {}
+function RaidNotice_AddMessage(_, text) raidWarnings[#raidWarnings + 1] = text end
 MastercraftDB = { inv = { ["Player-1"] = { bags = {}, bank = { [14048] = 8 } }, ["Player-2"] = { bags = { [14048] = 5 }, bank = { [14048] = 10 } } }, recipes = { ["Player-1"] = {
 	Tailoring = { list = {
 		{ id = 1, name = "Runecloth Bag", category = "Bags", learned = true, output = 14046, outputQty = 1, reagents = { { itemID = 14048, qty = 5 } } },
@@ -665,6 +674,51 @@ eq(cyc._text, "Next: Enchants > Yell", "yell takes its turn when ticked")
 bc[3]:SetChecked(false); bc[3]._scripts.OnClick(bc[3])
 GetChannelList = fullChannels
 DB.settings.publicSpacing = 0
+
+-- copy a post for this character
+UI.Show("Posts")
+local before = #DB.R.posts
+local theirPost = M.SavePost(nil, "Main's pitch", "WTS from the main", { SAY = true }, "Main Char-Stormrage")
+UI.tabs.Posts.Select(theirPost.id)
+click("Copy this post for me", UI.tabs.Posts.panel)
+eq(#DB.R.posts, before + 2, "copied")
+eq(DB.R.posts[#DB.R.posts].owner, "Seller-Stormrage", "the copy is this character's")
+M.DeletePost(theirPost.id); M.DeletePost(DB.R.posts[#DB.R.posts].id)
+
+-- follow-ups: told when someone you owe a reply comes online
+M.EnsureContact("Wren Kettle-Stormrage", clock)
+UI.Show("Contacts", "Wren Kettle-Stormrage")
+local cpanel = UI.tabs.Contacts.panel
+click("Follow up", cpanel)
+eq(M.GetContact("Wren Kettle-Stormrage").followUp ~= nil, true, "marked for follow-up")
+eq(#friends, 1, "added to this character's friends list")
+eq(friends[1].name, "Wren Kettle", "by the name you whisper them by")
+eq(friends[1].note, "WoW CRM follow-up", "with a note saying why")
+eq(find("Stop follow-up", cpanel) ~= nil, true, "the button flips")
+local warned = #raidWarnings
+fire("FRIENDLIST_UPDATE")
+eq(#raidWarnings, warned, "no alert while they are offline")
+friends[1].connected = true
+fire("FRIENDLIST_UPDATE")
+eq(#raidWarnings, warned + 1, "alert when they log in")
+eq(raidWarnings[#raidWarnings]:find("Wren Kettle", 1, true) ~= nil, true, "naming them")
+fire("FRIENDLIST_UPDATE")
+eq(#raidWarnings, warned + 1, "only once")
+M.SetFollowUp("Carl-Stormrage", "wants a bag", clock + 1)
+fire("CHAT_MSG_CHANNEL", "LFG RFD", "Carl-Stormrage")
+eq(#raidWarnings, warned + 2, "alert when someone you follow up with speaks in a channel")
+fire("CHAT_MSG_CHANNEL", "anyone?", "Carl-Stormrage")
+eq(#raidWarnings, warned + 2, "not on every line they say")
+local fwRows = {}
+for _, w in ipairs(widgets) do if w._text == "Done" and w._scripts.OnClick and w._shown then fwRows[#fwRows + 1] = w end end
+eq(#fwRows, 2, "the follow-up window lists both")
+fwRows[1]._scripts.OnClick(fwRows[1])
+eq(M.GetContact("Wren Kettle-Stormrage").followUp, nil, "Done ends the follow-up")
+local wrenListed = false
+for _, f in ipairs(friends) do if f.name == "Wren Kettle" then wrenListed = true end end
+eq(wrenListed, false, "and takes them off the friends list WoW CRM put them on")
+eq(friends[1] and friends[1].name, "Carl", "while the remaining follow-up is now watched too")
+M.ClearFollowUp("Carl-Stormrage")
 
 -- minimap button
 eq(WoWCRMMinimapButton ~= nil, true, "minimap button made at login")

@@ -105,6 +105,7 @@ function GetTradeTargetItemLink(i) if i == 1 and tGet then return link(tGet[1]) 
 function GetTradeTargetItemInfo(i) if i == 1 and tGet then return tGet[1], nil, tGet[2] end end
 Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end, GetAuctionPriceByItemID = function() return 250 end } } }
 function UnitGUID() return "Player-1" end
+function GetItemCount(id) return id == 14048 and 12 or 0 end
 function PlaySound() end
 MastercraftDB = { recipes = { ["Player-1"] = {
 	Tailoring = { list = {
@@ -437,6 +438,14 @@ local function row(name)
 	end
 end
 eq(row("Runecloth Bag") ~= nil, true, "recipes listed for the chosen profession")
+eq(row("Runecloth Bag").item.canMake, 2, "12 cloth in bags at 5 each makes 2")
+local boxes = kind("CheckButton", prod) -- learned, craftable, my products
+boxes[2]:SetChecked(true)
+boxes[2]._scripts.OnClick(boxes[2])
+eq(row("Silk Reagent Bag"), nil, "Craftable now hides what you lack materials for")
+eq(row("Runecloth Bag") ~= nil, true, "and keeps what you can make")
+boxes[2]:SetChecked(false)
+boxes[2]._scripts.OnClick(boxes[2])
 row("Runecloth Bag")._scripts.OnClick(row("Runecloth Bag"))
 click("Add to my products", prod)
 eq(DB.R.products["Tailoring|Runecloth Bag"] ~= nil, true, "recipe marked as my product")

@@ -5,7 +5,7 @@ local U = ns.Util
 local Cat = {}
 ns.Catalog = Cat
 
-Cat.SORTS = { "name", "category", "mats cost", "sale value", "margin", "times sold" }
+Cat.SORTS = { "name", "category", "mats cost", "sale value", "margin", "times sold", "can make" }
 
 function Cat.Key(profession, name)
 	return profession .. "|" .. name
@@ -14,7 +14,8 @@ end
 -- recipes: array of { id, name, category, learned, output, outputQty, reagents = { { itemID, qty } } }
 -- priceOf(itemID) -> copper (0 when unknown)
 -- sold: item name -> quantity sold;  products: key -> anything, for recipes marked as "my products"
-function Cat.Build(recipes, profession, priceOf, sold, products)
+-- countOf(itemID) -> how many are in the player's bags right now (optional)
+function Cat.Build(recipes, profession, priceOf, sold, products, countOf)
 	local rows = {}
 	for _, r in ipairs(recipes or {}) do
 		if type(r) == "table" and r.name then
@@ -25,12 +26,18 @@ function Cat.Build(recipes, profession, priceOf, sold, products)
 				output = r.output, outputQty = tonumber(r.outputQty) or 1,
 				reagents = {}, mats = 0, unpriced = 0,
 			}
+			local canMake
 			for _, g in ipairs(r.reagents or {}) do
 				local each = priceOf(g.itemID) or 0
-				local qty = tonumber(g.qty) or 1
-				row.reagents[#row.reagents + 1] = { itemID = g.itemID, qty = qty, each = each }
+				local qty = math.max(1, tonumber(g.qty) or 1)
+				local have = countOf and (tonumber(countOf(g.itemID)) or 0) or 0
+				local times = math.floor(have / qty)
+				if not canMake or times < canMake then canMake = times end
+				row.reagents[#row.reagents + 1] = { itemID = g.itemID, qty = qty, each = each, have = have }
 				if each > 0 then row.mats = row.mats + each * qty else row.unpriced = row.unpriced + 1 end
 			end
+			-- How many crafts the materials in your bags cover right now (the scarcest material decides).
+			row.canMake = canMake or 0
 			row.sale = row.output and (priceOf(row.output) or 0) * row.outputQty or 0
 			row.margin = row.sale > 0 and (row.sale - row.mats) or 0
 			row.sold = (sold and sold[r.name]) or 0
@@ -52,7 +59,7 @@ function Cat.Categories(rows)
 	return out
 end
 
--- opts: category ("All" or a name), learnedOnly, productsOnly, search
+-- opts: category ("All" or a name), learnedOnly, craftableOnly, productsOnly, search
 function Cat.Filter(rows, opts)
 	local q = U.Trim(opts.search):lower()
 	local out = {}
@@ -60,6 +67,7 @@ function Cat.Filter(rows, opts)
 		local ok = (not opts.category or opts.category == "All" or r.category == opts.category)
 			and (not opts.learnedOnly or r.learned)
 			and (not opts.productsOnly or r.product)
+			and (not opts.craftableOnly or r.canMake >= 1)
 			and (q == "" or r.name:lower():find(q, 1, true) ~= nil)
 		if ok then out[#out + 1] = r end
 	end
@@ -80,6 +88,8 @@ function Cat.Sort(rows, by)
 			if a.margin ~= b.margin then return a.margin > b.margin end
 		elseif by == "times sold" then
 			if a.sold ~= b.sold then return a.sold > b.sold end
+		elseif by == "can make" then
+			if a.canMake ~= b.canMake then return a.canMake > b.canMake end
 		end
 		if a.name ~= b.name then return a.name < b.name end
 		return tostring(a.id) < tostring(b.id)

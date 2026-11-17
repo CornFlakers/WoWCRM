@@ -397,7 +397,8 @@ local prows = Cat.Build({
 	{ id = 1, name = "Silk Bag", category = "Bags", learned = true, output = 10, outputQty = 1, reagents = { { itemID = 1, qty = 4 } } },
 	{ id = 2, name = "Reagent Bag", category = "Specialty Bags", learned = false, output = 11, reagents = { { itemID = 1, qty = 2 }, { itemID = 2, qty = 1 } } },
 	{ id = 3, name = "Bolt", category = "", learned = true, reagents = {} },
-}, "Tailoring", function(i) return cost[i] or 0 end, { ["Silk Bag"] = 3 }, { ["Tailoring|Silk Bag"] = true })
+}, "Tailoring", function(i) return cost[i] or 0 end, { ["Silk Bag"] = 3 }, { ["Tailoring|Silk Bag"] = true },
+	function(i) return ({ [1] = 9, [2] = 0 })[i] or 0 end)
 eq(#prows, 3, "rows built")
 eq(prows[1].mats, 400, "materials cost")
 eq(prows[1].sale, 1000, "sale value")
@@ -406,6 +407,12 @@ eq(prows[1].sold, 3, "times sold")
 eq(prows[1].product, true, "marked as my product")
 eq(prows[2].unpriced, 1, "material without a price is counted")
 eq(prows[3].category, "Other", "missing category")
+eq(prows[1].canMake, 2, "9 cloth at 4 each makes 2")
+eq(prows[2].canMake, 0, "one missing material means none can be made")
+eq(prows[3].canMake, 0, "a recipe with no materials listed is not counted as craftable")
+eq(#Cat.Filter(prows, { craftableOnly = true }), 1, "craftable now")
+eq(#Cat.Filter(prows, { craftableOnly = true, learnedOnly = true }), 1, "craftable and learned together")
+eq(Cat.Sort(Cat.Filter(prows, {}), "can make")[1].name, "Silk Bag", "sort by how many you can make")
 eq(table.concat(Cat.Categories(prows), ","), "All,Bags,Other,Specialty Bags", "categories")
 eq(#Cat.Filter(prows, { learnedOnly = true }), 2, "learned only")
 eq(#Cat.Filter(prows, { category = "Specialty Bags" }), 1, "by category")

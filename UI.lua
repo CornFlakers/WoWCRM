@@ -941,7 +941,9 @@ AddTab("Products", function(p, tab)
 	local search = At(Edit(p, 130), p, 514, -1)
 	search:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
 	local learned = At(Check(p, "Learned only"), p, 0, -24)
-	local mine = At(Check(p, "My products only"), p, 130, -24)
+	local craftable = At(Check(p, "Craftable now"), p, 130, -24)
+	local mine = At(Check(p, "My products only"), p, 270, -24)
+	craftable:SetScript("OnClick", function() tab.Refresh() end)
 	learned:SetScript("OnClick", function() tab.Refresh() end)
 	mine:SetScript("OnClick", function() tab.Refresh() end)
 	local list = At(List(p, 776, 280, function(item) sel = item.id; tab.Refresh() end), p, 0, -50)
@@ -969,6 +971,14 @@ AddTab("Products", function(p, tab)
 	end
 
 	local function money(v) return v > 0 and U.FormatMoney(v) or "?" end
+
+	-- What is in your bags right now. The bank is not counted: you could not craft from it here.
+	local function inBags(itemID)
+		local get = (C_Item and C_Item.GetItemCount) or GetItemCount
+		if not get then return 0 end
+		local ok, n = pcall(get, itemID)
+		return ok and tonumber(n) or 0
+	end
 
 	-- Item id -> the profession that makes it, across every character Mastercraft has scanned.
 	local function craftedBy()
@@ -1003,14 +1013,15 @@ AddTab("Products", function(p, tab)
 		end
 
 		local rows = ns.Catalog.Build(src[prof.value].list, prof.value, function(id) return (Price.GetByID(id)) end,
-			M.SoldCounts(), DB.R.products)
+			M.SoldCounts(), DB.R.products, inBags)
 		cat:SetList(ns.Catalog.Categories(rows))
 		local shown = ns.Catalog.Sort(ns.Catalog.Filter(rows, {
-			category = cat.value, learnedOnly = learned:GetChecked(), productsOnly = mine:GetChecked(), search = search:GetText(),
+			category = cat.value, learnedOnly = learned:GetChecked(), craftableOnly = craftable:GetChecked(),
+			productsOnly = mine:GetChecked(), search = search:GetText(),
 		}), sort.value)
 		list:Set(shown, function(r)
 			return (r.product and "|cffffd100*|r " or "") .. r.name .. "  |cff888888" .. r.category .. (r.learned and "" or ", not learned") .. "|r",
-				("mats %s    sells %s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
+				(r.canMake > 0 and ("|cff40ff40can make " .. r.canMake .. "|r    ") or "") .. ("mats %s    sells %s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
 					r.sale > 0 and ((r.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(r.margin))) or "?", r.sold)
 		end, sel)
 		count:SetText(("%d of %d recipes shown. * marks your products. Prices: TradeSkillMaster, Auctionator or vendor."):format(#shown, #rows))
@@ -1023,11 +1034,13 @@ AddTab("Products", function(p, tab)
 		end
 		toggle:Enable()
 		toggle:SetText(current.product and "Remove from my products" or "Add to my products")
-		local L = { ("|cffffd100%s|r  -  %s, %s%s"):format(current.name, current.category, current.learned and "learned" or "not learned",
-			current.outputQty > 1 and (", makes " .. current.outputQty) or "") }
+		local L = { ("|cffffd100%s|r  -  %s, %s%s    %s"):format(current.name, current.category, current.learned and "learned" or "not learned",
+			current.outputQty > 1 and (", makes " .. current.outputQty) or "",
+			current.canMake > 0 and ("|cff40ff40Materials in your bags for " .. current.canMake .. "|r") or "You do not have all the materials in your bags") }
 		local makers = craftedBy()
 		for _, g in ipairs(current.reagents) do
-			L[#L + 1] = ("   %dx %s    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID), money(g.each), money(g.each * g.qty),
+			L[#L + 1] = ("   %dx %s    |cff%s(have %d)|r    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID),
+				g.have >= g.qty and "40ff40" or "ff6060", g.have, money(g.each), money(g.each * g.qty),
 				makers[g.itemID] and ("    |cffffd100made by " .. makers[g.itemID] .. "|r") or "")
 		end
 		L[#L + 1] = ("Materials %s%s    Sells for %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),
@@ -1501,6 +1514,11 @@ end
 table.insert(ns.listeners, function()
 	UI.Refresh()
 	refreshBar()
+end)
+
+-- Keep "craftable now" current as your bags change.
+ns.On("BAG_UPDATE_DELAYED", function()
+	if ns.ready and current == "Products" then UI.Refresh() end
 end)
 
 ns.On("PLAYER_LOGIN", function()

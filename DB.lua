@@ -9,6 +9,13 @@ local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
 	heldFree = true,      -- materials already held count as costing nothing
+	publicSpacing = 2,    -- minutes between any two posts to Say, Yell, General or Trade (0 = off)
+	quoteSmaller = true,  -- offer the next smaller, cheaper bag in a quote
+	quoteText = "Hi {name}! {item} is {price} with my mats.",
+	quoteAlt = "I can also do {alt} for {altprice}.",
+	windowScale = 100,    -- size of the main window, percent
+	showMinimap = true,
+	minimapAngle = 200,
 	saveReminder = true,  -- offer a backup at quiet moments
 	saveAfterChanges = 25, -- ...once this many changes are waiting
 	saveAfterMinutes = 30, -- ...or the oldest waiting change is this old
@@ -55,6 +62,7 @@ function DB.Init(saved, realm)
 		if saved.settings[k] == nil then saved.settings[k] = v end
 	end
 	if type(saved.settings.invSources) ~= "table" then saved.settings.invSources = { bags = true } end
+	if type(saved.settings.cycleChannels) ~= "table" then saved.settings.cycleChannels = { GENERAL = true, TRADE = true } end
 	if saved.settings.minGap < DB.MIN_GAP_FLOOR then saved.settings.minGap = DB.MIN_GAP_FLOOR end
 
 	saved.realms = saved.realms or {}

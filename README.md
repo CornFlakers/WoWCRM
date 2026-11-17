@@ -32,6 +32,16 @@ A typical session:
 3. Click **Post to …** once per channel (or use the quick-post bar).
 4. Replies appear on the **Leads** tab. Whisper back, then **New order** when they buy.
 
+## Posting without spamming
+
+- **One pause for every public channel.** After any post to Say, Yell, General or Trade, all of them wait 2 minutes (Options tab; 0 turns it off). One advert can no longer land in Yell, General and Trade within seconds.
+- **The quick-post bar's big button** (`/crm bar`, or right-click the minimap button) takes turns: next post, next channel. General, then Trade, then General again. Outside a city, where there is no Trade, it uses General. Tick Yell on the bar to include it. While it waits, the button counts down.
+- **Whispers are not held back.** Whispering a post to someone is private and has no pause.
+
+## Getting to WoW CRM
+
+`/crm`, the minimap button (drag it around the edge; hide it on the Options tab), or the game's Settings > AddOns > WoW CRM. Drag the window's bottom-right corner to make it bigger or smaller.
+
 ## Campaigns
 
 A campaign is a selling session: the posts you want to run, how long to run for, and how long to wait between posts to the same channel (5 minutes unless you change it).

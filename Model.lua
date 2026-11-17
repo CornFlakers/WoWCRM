@@ -52,16 +52,25 @@ function M.DeletePost(id)
 	if i then table.remove(R().posts, i) end
 end
 
+-- Seconds before this channel can be posted to again. Public channels wait for two things:
+-- their own gap since they were last used, and a pause after any public post at all, so that
+-- one advert never lands in Yell, General and Trade within seconds of each other.
 function M.GapRemaining(target, now)
-	local last = R().lastSent[target]
-	if not last then return 0 end
-	local gap = 2
-	if ns.PUBLIC_TARGET[target] then
-		gap = DB.settings.minGap
-		local c = M.RunningCampaign(now)
-		if c then gap = math.max(gap, c.interval * 60) end
+	local r = R()
+	local left = 0
+	local last = r.lastSent[target]
+	if last then
+		local gap = 2
+		if ns.PUBLIC_TARGET[target] then
+			gap = DB.settings.minGap
+			local c = M.RunningCampaign(now)
+			if c then gap = math.max(gap, c.interval * 60) end
+		end
+		left = gap - (now - last)
 	end
-	local left = gap - (now - last)
+	if ns.PUBLIC_TARGET[target] and r.lastPublic then
+		left = math.max(left, (DB.settings.publicSpacing or 0) * 60 - (now - r.lastPublic))
+	end
 	return left > 0 and math.ceil(left) or 0
 end
 
@@ -92,6 +101,7 @@ function M.RecordSend(post, target, now, zone)
 	local c = M.ActiveCampaign(now)
 	local cid = (c and U.Contains(c.posts, post.id)) and c.id or nil
 	r.lastSent[target] = now
+	if ns.PUBLIC_TARGET[target] then r.lastPublic = now end
 	M.cursor[post.id] = U.Contains(ns.TARGETS, target) or 0
 	r.lastPost = { id = post.id, time = now, campaign = cid }
 	local log = r.postLog
@@ -103,6 +113,50 @@ function M.RecordSend(post, target, now, zone)
 	if r.tracking.on then
 		r.tracking.post, r.tracking.postTime, r.tracking.campaign = post.id, now, cid
 	end
+end
+
+-- ---------------------------------------------------------------- one-button cycle
+-- The quick-post bar's big button: each tap sends the next post to the next channel in turn
+-- (General, Trade, and Yell when ticked), skipping channels you are not in, and respecting the
+-- pause between public posts. Where it is in the turn is kept for this session only.
+
+M.cycleState = { post = 0, chan = 0 }
+
+-- Posts meant for public channels. Posts ticked only for Guild or Party stay out of the cycle.
+function M.CyclePosts()
+	local out = {}
+	for _, p in ipairs(R().posts) do
+		local t = p.targets
+		if t.SAY or t.YELL or t.GENERAL or t.TRADE then out[#out + 1] = p end
+	end
+	return out
+end
+
+-- enabled: channel -> true.  avail(channel) -> ok.
+-- Returns post, channel, channel's place in the turn; or nil, nil, seconds to wait, reason.
+function M.CycleNext(enabled, avail, now)
+	local posts = M.CyclePosts()
+	if #posts == 0 then return nil, nil, nil, "No posts for Say, Yell, General or Trade yet." end
+	local st, n = M.cycleState, #ns.CYCLE_CHANNELS
+	local wait
+	for i = 1, n do
+		local idx = ((st.chan + i - 1) % n) + 1
+		local t = ns.CYCLE_CHANNELS[idx]
+		if enabled[t] and avail(t) then
+			local g = M.GapRemaining(t, now)
+			if g == 0 then return posts[(st.post % #posts) + 1], t, idx end
+			if not wait or g < wait then wait = g end
+		end
+	end
+	if wait then return nil, nil, wait end
+	return nil, nil, nil, "None of the ticked channels is available here."
+end
+
+function M.CycleAdvance(post, chanIdx)
+	for i, p in ipairs(M.CyclePosts()) do
+		if p.id == post.id then M.cycleState.post = i end
+	end
+	M.cycleState.chan = chanIdx or M.cycleState.chan
 end
 
 -- ---------------------------------------------------------------- tracking

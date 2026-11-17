@@ -12,7 +12,8 @@ local function eq(got, want, what)
 		error(("%s: expected %s, got %s"):format(what, tostring(want), tostring(got)), 2)
 	end
 end
-local function fresh() DB.Init({}, "Stormrage"); M.cursor = {} end
+-- The pause between any two public posts is switched off here; it has its own tests below.
+local function fresh() DB.Init({}, "Stormrage"); M.cursor = {}; DB.settings.publicSpacing = 0 end
 local ALL = function() return true end
 
 -- names
@@ -522,6 +523,62 @@ eq(held.altBags[1], 7, "without Mastercraft, other characters' bags come from Ba
 eq(held.altBank[1], 9, "and their banks too")
 eq(held.guild[1], nil, "no guild bank stored")
 eq(DB.Init({}, "Inv").settings.invSources.bags, true, "bags counted by default")
+
+-- a strict pause between any two public posts, and the one-button cycle
+fresh()
+eq(DB.Init({}, "Spacing").settings.publicSpacing, 2, "two minutes between public posts by default")
+fresh()
+DB.settings.publicSpacing = 2
+M.cycleState = { post = 0, chan = 0 }
+local cp1 = M.SavePost(nil, "One", "one", { TRADE = true })
+local cp2 = M.SavePost(nil, "Two", "two", { GENERAL = true })
+M.SavePost(nil, "Guild only", "g", { GUILD = true })
+eq(#M.CyclePosts(), 2, "posts for Guild or Party only stay out of the cycle")
+local cyc = { GENERAL = true, TRADE = true }
+local cpost, ctgt, cidx = M.CycleNext(cyc, ALL, T)
+eq(cpost.id, cp1.id, "the cycle starts with the first post")
+eq(ctgt, "GENERAL", "and with General")
+M.RecordSend(cpost, ctgt, T, "City"); M.CycleAdvance(cpost, cidx)
+local _, _, cwait = M.CycleNext(cyc, ALL, T + 30)
+eq(cwait, 90, "then waits two minutes before any public post")
+eq(M.GapRemaining("TRADE", T + 30), 90, "the pause holds back other public channels too")
+eq(M.GapRemaining("GUILD", T + 30), 0, "guild is not held back")
+cpost, ctgt, cidx = M.CycleNext(cyc, ALL, T + 120)
+eq(cpost.id, cp2.id, "next tap, next post")
+eq(ctgt, "TRADE", "next tap, next channel")
+M.RecordSend(cpost, ctgt, T + 120, "City"); M.CycleAdvance(cpost, cidx)
+local noTrade = function(t) return t ~= "TRADE" end
+cpost, ctgt, cidx = M.CycleNext(cyc, noTrade, T + 240)
+eq(ctgt, "GENERAL", "outside a city it goes to General")
+eq(cpost.id, cp1.id, "posts take turns")
+M.RecordSend(cpost, ctgt, T + 240, "Field"); M.CycleAdvance(cpost, cidx)
+cpost, ctgt = M.CycleNext({ GENERAL = true, TRADE = true, YELL = true }, noTrade, T + 360)
+eq(ctgt, "YELL", "yell takes its turn when ticked")
+local _, _, _, cwhy = M.CycleNext({ TRADE = true }, noTrade, T + 480)
+eq(cwhy ~= nil, true, "explains when no ticked channel is available")
+DB.settings.publicSpacing = 0
+eq(M.GapRemaining("TRADE", T + 361), 0, "the pause can be switched off")
+
+-- personal quotes, with the next smaller and cheaper bag
+local bq = Cat.Build({
+	{ id = 11, name = "Big Bag", category = "Bags", learned = true, output = 30, reagents = {} },
+	{ id = 12, name = "Mid Bag", category = "Bags", learned = true, output = 31, reagents = {} },
+	{ id = 13, name = "Small Bag", category = "Bags", learned = true, output = 32, reagents = {} },
+	{ id = 14, name = "Unknown Bag", category = "Bags", learned = false, output = 33, reagents = {} },
+	{ id = 15, name = "Herb Bag", category = "Specialty Bags", learned = true, output = 34, reagents = {} },
+}, "Tailoring", function(i) return ({ [30] = 40000, [31] = 15000, [32] = 5000, [33] = 9000, [34] = 3000 })[i] or 0 end, {}, {}, nil,
+	function(i) return ({ [30] = 16, [31] = 12, [32] = 8, [33] = 14, [34] = 12 })[i] end)
+local alt = Cat.SmallerOption(bq, bq[1])
+eq(alt.name, "Mid Bag", "the next size down that you have learned, of the same kind")
+eq(Cat.SmallerOption(bq, bq[3]), nil, "nothing smaller than the smallest")
+eq(Cat.SmallerOption(bq, bq[5]), nil, "a specialty bag is not offered a plain bag")
+local qo = { template = "Hi {name}! {item} is {price} with my mats.", altTemplate = "I can also do {alt} for {altprice}.", name = "Ann" }
+eq(Cat.QuoteText(bq[1], alt, qo), "Hi Ann! Big Bag (16 slot) is 4g with my mats. I can also do Mid Bag (12 slot) for 1g 50s.", "personal quote with a cheaper option")
+eq(Cat.QuoteText(bq[3], nil, qo), "Hi Ann! Small Bag (8 slot) is 50s with my mats.", "quote without an option")
+qo.altTemplate = ""
+eq(Cat.QuoteText(bq[1], alt, qo), "Hi Ann! Big Bag (16 slot) is 4g with my mats.", "the option can be left out")
+eq(Cat.WowheadURL(bq[1]), "https://www.wowhead.com/forever/spell=11", "Wowhead page for the recipe")
+eq(Cat.WowheadURL({ name = "Black Silk Pack" }), "https://www.wowhead.com/forever/search?q=Black+Silk+Pack", "Wowhead search when the recipe id is unknown")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

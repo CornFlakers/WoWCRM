@@ -10,6 +10,8 @@ ns.TARGET_LABEL = {
 	TRADE = "Trade", PARTY = "Party", GUILD = "Guild",
 }
 ns.PUBLIC_TARGET = { SAY = true, YELL = true, GENERAL = true, TRADE = true }
+-- The channels the one-button cycle on the quick-post bar takes turns between, in order.
+ns.CYCLE_CHANNELS = { "GENERAL", "TRADE", "YELL" }
 ns.CONTACT_STATUS = { "lead", "customer", "repeat", "vip", "do not contact", "ignored" }
 ns.ORDER_STATUS = { "quoted", "in progress", "delivered", "paid", "cancelled" }
 ns.ORDER_TYPE = { "crafted", "goods", "service" }

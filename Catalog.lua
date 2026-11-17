@@ -162,3 +162,37 @@ function Cat.QuoteList(rows, maxBytes)
 	end
 	return text, n
 end
+
+-- The bag to offer as a cheaper choice: the next size down, of the same kind (a reagent bag is
+-- no substitute for a plain bag), that you have learned, with a lower price.
+function Cat.SmallerOption(rows, row)
+	if not row or not row.slots then return nil end
+	local best
+	for _, r in ipairs(rows or {}) do
+		if not r.header and r ~= row and r.category == row.category and r.learned and r.slots and r.slots < row.slots
+			and (r.price or 0) > 0 and ((row.price or 0) <= 0 or r.price < row.price) then
+			if not best or r.slots > best.slots or (r.slots == best.slots and r.price < best.price) then best = r end
+		end
+	end
+	return best
+end
+
+-- A personal reply quoting one item, and optionally a cheaper one.
+-- opts: template, altTemplate, name (who asked), label / altLabel (item links to use instead of names)
+function Cat.QuoteText(row, alt, opts)
+	if not row or (row.price or 0) <= 0 then return nil end
+	local function item(r, label)
+		return (label or r.name) .. (r.slots and (" (" .. r.slots .. " slot)") or "")
+	end
+	local text = U.Fill(opts.template, { name = opts.name, item = item(row, opts.label), price = U.FormatMoney(row.price) })
+	if alt and (alt.price or 0) > 0 and U.Trim(opts.altTemplate) ~= "" then
+		text = text .. " " .. U.Fill(opts.altTemplate, { name = opts.name, alt = item(alt, opts.altLabel), altprice = U.FormatMoney(alt.price) })
+	end
+	return text
+end
+
+-- Wowhead's page for the recipe (it lists the pattern and where it comes from), or a search.
+function Cat.WowheadURL(row)
+	if type(row.id) == "number" then return "https://www.wowhead.com/forever/spell=" .. row.id end
+	return "https://www.wowhead.com/forever/search?q=" .. (tostring(row.name):gsub("[^%w]+", "+"))
+end

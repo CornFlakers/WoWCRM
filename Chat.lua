@@ -99,6 +99,18 @@ function Chat.WhisperPost(post, who)
 	return true, name
 end
 
+-- One tap on the quick-post bar's cycle button: the next post to the next channel in turn.
+function Chat.CycleSend(enabled)
+	local post, target, idx, why = M.CycleNext(enabled, Chat.Available, U.Now())
+	if not post then
+		return false, why or (idx and ("Next post in " .. M.Clock(idx) .. ".")) or "Nothing to post."
+	end
+	local ok, err = Chat.Send(post, target)
+	if not ok then return false, err end
+	M.CycleAdvance(post, idx)
+	return true, post.name .. " > " .. ns.TARGET_LABEL[target]
+end
+
 -- One click during a campaign: send whatever the campaign says is due.
 function Chat.CampaignPost()
 	local now = U.Now()
@@ -135,11 +147,12 @@ ns.On("CHAT_MSG_WHISPER_INFORM", function(_, target)
 	if c then c.lastContact = U.Now() end
 end)
 
--- Opens the chat box with a reply to the last person who whispered, ready to read and send.
-function Chat.Reply(text)
+-- Opens the chat box with a message to this contact (or a reply to whoever whispered last),
+-- ready to read and send.
+function Chat.Reply(text, key)
 	local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
 	if not open then return false end
-	open("/r " .. text)
+	if key then open("/w " .. U.Display(key, DB.realm) .. " " .. text) else open("/r " .. text) end
 	return true
 end
 

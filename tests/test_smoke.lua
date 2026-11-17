@@ -47,6 +47,7 @@ function CreateFrame(kind, name, parent)
 	return w
 end
 UIParent = widget("Frame")
+Minimap = widget("Frame")
 GameTooltip = widget("GameTooltip")
 MailFrame = widget("Frame")
 MailFrame:Hide() -- closed until the test walks up to a mailbox
@@ -115,7 +116,8 @@ function GetTradeTargetItemLink(i) if i == 1 and tGet then return link(tGet[1]) 
 function GetTradeTargetItemInfo(i) if i == 1 and tGet then return tGet[1], nil, tGet[2] end end
 Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end, GetAuctionPriceByItemID = function() return 250 end } } }
 function UnitGUID() return "Player-1" end
-C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "Bag" }, { leftText = id == 14046 and "14 Slot Bag" or "Binds when equipped" } } } end }
+local SLOTS = { [14046] = "14 Slot Bag", [4238] = "6 Slot Bag" }
+C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "Bag" }, { leftText = SLOTS[id] or "Binds when equipped" } } } end }
 local opened = {}
 function ChatFrame_OpenChat(text) opened[#opened + 1] = text end
 function GetItemCount(id, withBank) return id == 14048 and (withBank and 20 or 12) or 0 end
@@ -125,6 +127,7 @@ MastercraftDB = { inv = { ["Player-1"] = { bags = {}, bank = { [14048] = 8 } }, 
 	Tailoring = { list = {
 		{ id = 1, name = "Runecloth Bag", category = "Bags", learned = true, output = 14046, outputQty = 1, reagents = { { itemID = 14048, qty = 5 } } },
 		{ id = 2, name = "Silk Reagent Bag", category = "Specialty Bags", learned = false, output = 500, reagents = { { itemID = 900, qty = 1 } } },
+		{ id = 4, name = "Linen Bag", category = "Bags", learned = true, output = 4238, reagents = { { itemID = 2996, qty = 3 } } },
 	} },
 	Alchemy = { list = { { id = 3, name = "Blue Dye", category = "Dyes", learned = false, output = 900, reagents = {} } } },
 } } }
@@ -174,6 +177,8 @@ local function message() return WoWCRMFrame.msg._text end
 -- ---------------------------------------------------------------- the session
 fire("PLAYER_LOGIN")
 eq(ns.ready, true, "ready after login")
+eq(DB.settings.publicSpacing, 2, "two minutes between public posts by default")
+DB.settings.publicSpacing = 0 -- the steps below post back to back; the pause has its own steps near the end
 eq(type(WoWCRMDB), "table", "saved table created")
 eq(WoWCRMSaveButton._shown, false, "save button hidden with nothing to save")
 
@@ -532,9 +537,9 @@ eq(row("Runecloth Bag") ~= nil, true, "and keeps what you can make")
 boxes[2]:SetChecked(false)
 boxes[2]._scripts.OnClick(boxes[2])
 row("Runecloth Bag")._scripts.OnClick(row("Runecloth Bag"))
-click("Add to my products", prod)
+click("Add to products", prod)
 eq(DB.R.products["Tailoring|Runecloth Bag"] ~= nil, true, "recipe marked as my product")
-eq(find("Remove from my products", prod) ~= nil, true, "button flips once it is a product")
+eq(find("Remove product", prod) ~= nil, true, "button flips once it is a product")
 row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
 eq(row("Runecloth Bag").item.slots, 14, "bag size read from the tooltip")
 local headers = 0
@@ -546,7 +551,8 @@ pe[2]:SetText("2g")
 click("Set", prod)
 eq(DB.R.products["Tailoring|Runecloth Bag"].price, 20000, "your price saved")
 click("Quote", prod)
-eq(opened[#opened], "/r Runecloth Bag (14 slot) 2g", "quote placed in chat as a reply")
+eq(opened[#opened], "/w Dora Hi Dora! Runecloth Bag (14 slot) is 2g with my mats. I can also do Linen Bag (6 slot) for 2s 50c.",
+	"personal quote to whoever asked, with the next smaller bag")
 click("Quote list", prod)
 eq(opened[#opened]:find("Runecloth Bag (14 slot) 2g", 1, true) ~= nil, true, "price list placed in chat as a reply")
 row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
@@ -561,8 +567,17 @@ eq(detailHas("How to get this pattern:|r Vendor: Borya / Orgrimmar"), true, "sou
 sourceReady = false
 row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
 eq(detailHas("Vendor: Borya / Orgrimmar"), true, "source is remembered after the window closes")
-click("Mastercraft", prod)
-eq(mcOpened, 1, "Mastercraft button opens Mastercraft")
+click("Codex", prod)
+eq(mcOpened, 1, "without its slash command, Mastercraft simply opens")
+local mcArg
+SlashCmdList.MASTERCRAFT = function(a) mcArg = a end
+click("Codex", prod)
+eq(mcArg, "codex", "Codex button opens Mastercraft on its Codex")
+SlashCmdList.MASTERCRAFT = nil
+click("Wowhead", prod)
+local linkShown = false
+for _, w in ipairs(widgets) do if w._kind == "EditBox" and w._text == "https://www.wowhead.com/forever/spell=2" then linkShown = true end end
+eq(linkShown, true, "Wowhead address shown ready to copy")
 local flagged = false
 for _, w in ipairs(widgets) do if w._kind == "FontString" and w._text:find("made by Alchemy", 1, true) then flagged = true end end
 eq(flagged, true, "material made by another profession is flagged")
@@ -577,6 +592,50 @@ end
 eq(barButton ~= nil, true, "bar has a button for the post")
 barButton._scripts.OnClick(barButton)
 eq(#sent, n + 1, "bar click sends one message")
+
+-- the bar's one button: next post, next channel, strict pause between posts
+DB.settings.publicSpacing = 2
+clock = clock + 300
+UI.ToggleBar(); UI.ToggleBar() -- hide and show to redraw
+local cyc
+for _, w in ipairs(widgets) do if w._scripts.OnClick and w._text:find("^Next: ") then cyc = w end end
+eq(cyc ~= nil, true, "the quick-post bar has a one-button cycle")
+eq(cyc._text, "Next: Enchants > General", "it starts with General")
+local before = #sent
+cyc._scripts.OnClick(cyc)
+eq(#sent, before + 1, "one tap, one message")
+eq(sent[#sent].channel, 1, "to General")
+eq(cyc._text, "Next post in 2:00", "then a two-minute pause")
+eq(cyc._enabled, false, "the button cannot be pressed during the pause")
+eq(barButton._enabled, false, "the single-post buttons wait too")
+clock = clock + 120
+UI.ToggleBar(); UI.ToggleBar()
+eq(cyc._text, "Next: Enchants > Trade", "then Trade")
+cyc._scripts.OnClick(cyc)
+eq(sent[#sent].channel, 3, "to the Trade channel")
+local fullChannels = GetChannelList
+GetChannelList = function() return 1, "General - Field", false end
+clock = clock + 120
+UI.ToggleBar(); UI.ToggleBar()
+eq(cyc._text, "Next: Enchants > General", "outside a city it goes to General")
+local bc = kind("CheckButton", cyc._parent)
+eq(#bc, 3, "General, Trade and Yell boxes")
+eq(bc[3]:GetChecked(), false, "yell is left out unless ticked")
+bc[3]:SetChecked(true); bc[3]._scripts.OnClick(bc[3])
+eq(DB.settings.cycleChannels.YELL, true, "the yell choice is remembered")
+eq(cyc._text, "Next: Enchants > Yell", "yell takes its turn when ticked")
+bc[3]:SetChecked(false); bc[3]._scripts.OnClick(bc[3])
+GetChannelList = fullChannels
+DB.settings.publicSpacing = 0
+
+-- minimap button
+eq(WoWCRMMinimapButton ~= nil, true, "minimap button made at login")
+WoWCRMFrame:Hide()
+WoWCRMMinimapButton._scripts.OnClick(WoWCRMMinimapButton, "LeftButton")
+eq(WoWCRMFrame._shown, true, "clicking it opens the window")
+DB.settings.showMinimap = false
+UI.UpdateMinimap()
+eq(WoWCRMMinimapButton._shown, false, "it can be hidden")
 
 SlashCmdList.WOWCRM("probe")
 click("1. Say from a click")
@@ -596,6 +655,7 @@ local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,
 	SLASH_WOWCRM1 = true, SLASH_WOWCRM2 = true,
 	WoWCRMScanTooltip = true, -- hidden tooltip used to read bag sizes
+	WoWCRMMinimapButton = true,
 }
 for k in pairs(_G) do
 	if not globalsBefore[k] and not allowed[k] then error("unexpected global: " .. tostring(k)) end

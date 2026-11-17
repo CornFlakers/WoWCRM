@@ -298,19 +298,19 @@ AddTab("Posts", function(p, tab)
 		local ok, res = Chat.WhisperPost(post, whisperTo:GetText())
 		UI.Msg(ok and ("Whispered to " .. res .. ".") or res, not ok)
 	end), p, X + 290, -381)
-	local replyBtn = At(Button(p, "Reply to last whisper", 190, function()
+	local replyBtn = At(Button(p, "Reply to last whisper", 230, function()
 		local post = sel and M.GetPost(sel)
 		if not post then UI.Msg("Save the post first.", true) return end
 		if not ns.lastWhisperFrom then UI.Msg("Nobody has whispered you this session.", true) return end
 		local ok, res = Chat.WhisperPost(post, Name(ns.lastWhisperFrom))
 		UI.Msg(ok and ("Whispered to " .. res .. ".") or res, not ok)
-	end), p, X + 370, -381)
-	At(Label(p, "A whisper is private: it is not counted as a post and has no waiting time.", "GameFontDisableSmall"), p, X, -408)
+	end), p, X, -406)
+	At(Label(p, "A whisper is private: it is not counted as a post and has no waiting time.", "GameFontDisableSmall", 500), p, X, -434)
 
 	local function updateButtons()
 		local post = sel and M.GetPost(sel)
 		local now = U.Now()
-		replyBtn:SetText(ns.lastWhisperFrom and ("Reply to " .. U.Shorten(Name(ns.lastWhisperFrom), 16)) or "Reply to last whisper")
+		replyBtn:SetText(ns.lastWhisperFrom and ("Reply to " .. U.Shorten(Name(ns.lastWhisperFrom), 20)) or "Reply to last whisper")
 		if ns.lastWhisperFrom and post then replyBtn:Enable() else replyBtn:Disable() end
 		for _, t in ipairs(ns.TARGETS) do
 			local ok = post and post.targets[t] and Chat.Available(t) and M.GapRemaining(t, now) == 0
@@ -1000,7 +1000,7 @@ AddTab("Products", function(p, tab)
 	local detail = At(Label(p, "", "GameFontHighlightSmall", 770), p, 4, -338)
 	local current
 
-	local toggle = At(Button(p, "Add to my products", 190, function()
+	local toggle = At(Button(p, "Add to products", 150, function()
 		if not current then return end
 		local key = ns.Catalog.Key(current.profession, current.name)
 		if DB.R.products[key] then
@@ -1010,14 +1010,14 @@ AddTab("Products", function(p, tab)
 		end
 		ns.Changed()
 	end), p, 0, -446)
-	At(Button(p, "Refresh prices", 120, function() Price.Reset(); tab.Refresh() end), p, 196, -446)
+	At(Button(p, "Refresh", 80, function() Price.Reset(); tab.Refresh() end), p, 154, -446)
 	local count = At(Label(p, "", "GameFontDisableSmall", 180), p, 600, -29)
-	local shownRows, loadedFor = {}, nil
+	local shownRows, allRows, loadedFor = {}, {}, nil
 
 	-- Your own asking price for the selected recipe, and quick replies built from it.
-	At(Label(p, "My price", "GameFontHighlightSmall"), p, 326, -451)
-	local myPrice = At(Edit(p, 80), p, 382, -447)
-	At(Button(p, "Set", 44, function()
+	At(Label(p, "My price", "GameFontHighlightSmall"), p, 240, -451)
+	local myPrice = At(Edit(p, 76), p, 292, -447)
+	At(Button(p, "Set", 40, function()
 		if not current then return end
 		local v = U.ParseMoney(myPrice:GetText())
 		if not v then UI.Msg("Price not understood. Use a form like 2g 50s.", true) return end
@@ -1027,28 +1027,52 @@ AddTab("Products", function(p, tab)
 		DB.R.products[key] = entry
 		UI.Msg(v > 0 and ("Your price for " .. current.name .. " is " .. U.FormatMoney(v) .. ".") or "Your price cleared; the auction price is used.")
 		ns.Changed()
-	end), p, 468, -446)
-	At(Button(p, "Quote", 64, function()
+	end), p, 374, -446)
+	At(Button(p, "Quote", 60, function()
 		if not current then UI.Msg("Click a recipe first.", true) return end
-		local text = ns.Catalog.Quote(current, current.output and Price.ItemLink(current.output))
-		if text and #text > ns.MAX_CHAT_BYTES - 3 then text = ns.Catalog.Quote(current) end
+		local who = ns.lastWhisperFrom
+		local alt = DB.settings.quoteSmaller and ns.Catalog.SmallerOption(allRows, current) or nil
+		local opts = {
+			template = DB.settings.quoteText, altTemplate = DB.settings.quoteAlt,
+			name = who and (U.SplitKey(who)) or "there",
+			label = current.output and Price.ItemLink(current.output),
+			altLabel = alt and alt.output and Price.ItemLink(alt.output),
+		}
+		local text = ns.Catalog.QuoteText(current, alt, opts)
+		if text and U.ByteLen(text) > ns.MAX_CHAT_BYTES then
+			opts.label, opts.altLabel = nil, nil -- item links are long; use plain names instead
+			text = ns.Catalog.QuoteText(current, alt, opts)
+		end
+		if text and U.ByteLen(text) > ns.MAX_CHAT_BYTES then text = ns.Catalog.QuoteText(current, nil, opts) end
 		if not text then UI.Msg("No price yet. Type one in My price and press Set.", true) return end
-		Chat.Reply(text)
-		UI.Msg("Quote placed in the chat box as a reply to your last whisper. Press Enter to send.")
-	end), p, 516, -446)
-	At(Button(p, "Mastercraft", 96, function()
-		local toggle = rawget(_G, "Mastercraft_Toggle")
-		if type(toggle) ~= "function" then UI.Msg("Mastercraft is not installed or not enabled.", true) return end
-		toggle()
-		UI.Msg(current and ("In Mastercraft open Codex > Recipes and find " .. current.name .. "; its pin button sets the waypoint.")
-			or "In Mastercraft open Codex > Recipes; a recipe's pin button sets the waypoint.")
-	end), p, 680, -446)
-	At(Button(p, "Quote list", 90, function()
+		Chat.Reply(text, who)
+		UI.Msg((who and ("Quote for " .. Name(who)) or "Quote") .. " placed in the chat box. Check it, add anything, then press Enter.")
+	end), p, 418, -446)
+	At(Button(p, "Quote list", 80, function()
 		local text, n = ns.Catalog.QuoteList(shownRows, ns.MAX_CHAT_BYTES - 3)
 		if n == 0 then UI.Msg("Nothing in this list has a price yet.", true) return end
-		Chat.Reply(text)
-		UI.Msg(("Price list of %d items placed in the chat box as a reply. Press Enter to send."):format(n))
-	end), p, 584, -446)
+		Chat.Reply(text, ns.lastWhisperFrom)
+		UI.Msg(("Price list of %d items placed in the chat box. Press Enter to send."):format(n))
+	end), p, 482, -446)
+	At(Button(p, "Codex", 80, function()
+		local slash = SlashCmdList and SlashCmdList["MASTERCRAFT"]
+		local toggle = rawget(_G, "Mastercraft_Toggle")
+		if type(slash) == "function" then
+			slash("codex")
+		elseif type(toggle) == "function" then
+			toggle()
+		else
+			UI.Msg("Mastercraft is not installed or not enabled.", true)
+			return
+		end
+		UI.Msg(current and ("Mastercraft's Codex is open: choose Recipes and search for " .. current.name .. ". Its pin button sets the waypoint.")
+			or "Mastercraft's Codex is open: choose Recipes. A recipe's pin button sets the waypoint.")
+	end), p, 566, -446)
+	At(Button(p, "Wowhead", 90, function()
+		if not current then UI.Msg("Click a recipe first.", true) return end
+		UI.ShowLink("Wowhead page for " .. current.name, ns.Catalog.WowheadURL(current))
+		UI.Msg("Copy the address into your web browser. The page lists the pattern and where it comes from.")
+	end), p, 650, -446)
 
 	local function source()
 		local db = rawget(_G, "MastercraftDB")
@@ -1118,6 +1142,7 @@ AddTab("Products", function(p, tab)
 			M.SoldCounts(), DB.R.products, countOf, Price.BagSlots, DB.settings.heldFree)
 		heldFree:SetChecked(DB.settings.heldFree and true or false)
 		local costWord = DB.settings.heldFree and "to buy" or "mats"
+		allRows = rows
 		cat:SetList(ns.Catalog.Categories(rows))
 		local filtered = ns.Catalog.Filter(rows, {
 			category = cat.value, learnedOnly = learned:GetChecked(), craftableOnly = craftable:GetChecked(),
@@ -1146,14 +1171,14 @@ AddTab("Products", function(p, tab)
 			return
 		end
 		toggle:Enable()
-		toggle:SetText(current.product and "Remove from my products" or "Add to my products")
+		toggle:SetText(current.product and "Remove product" or "Add to products")
 		local L = { ("|cffffd100%s|r  -  %s, %s%s    %s"):format(current.name, current.category, current.learned and "learned" or "not learned",
 			current.outputQty > 1 and (", makes " .. current.outputQty) or "",
 			current.canMake > 0 and ("|cff40ff40You hold the materials for " .. current.canMake .. "|r") or "You do not hold all the materials in the places ticked above") }
 		if not current.learned then
 			local how = type(current.id) == "number" and Price.RecipeSource(current.id)
 			L[#L + 1] = how and ("|cffffd100How to get this pattern:|r " .. how)
-				or "|cffffd100How to get this pattern:|r not known yet. Open your profession window, then click this recipe again."
+				or "|cffffd100How to get this pattern:|r not known yet. Open your profession window and click it again, or use Codex or Wowhead below."
 		end
 		local makers = craftedBy()
 		for _, g in ipairs(current.reagents) do
@@ -1248,21 +1273,34 @@ end)
 
 -- ---------------------------------------------------------------- Options
 
-AddTab("Options", function(p, tab)
+AddTab("Options", function(outer, tab)
+	local sf = CreateFrame("ScrollFrame", nil, outer, "UIPanelScrollFrameTemplate")
+	sf:SetPoint("TOPLEFT", 0, 0)
+	sf:SetPoint("BOTTOMRIGHT", -26, 30)
+	local p = CreateFrame("Frame", nil, sf)
+	p:SetSize(740, 720)
+	sf:SetScrollChild(p)
+
 	local fields, y = {}, 0
 	local function header(text)
 		At(Label(p, text), p, 0, y - 4)
 		y = y - 24
 	end
-	local function number(key, text, min)
+	local function number(key, text, min, max)
 		At(Label(p, text, "GameFontHighlightSmall"), p, 12, y - 4)
-		fields[#fields + 1] = { key = key, min = min, edit = At(Edit(p, 60), p, 560, y) }
+		fields[#fields + 1] = { key = key, min = min, max = max, edit = At(Edit(p, 60), p, 600, y) }
 		y = y - 24
 	end
 	local function word(key, text)
 		At(Label(p, text, "GameFontHighlightSmall"), p, 12, y - 4)
-		fields[#fields + 1] = { key = key, text = true, edit = At(Edit(p, 120), p, 560, y) }
+		fields[#fields + 1] = { key = key, text = true, edit = At(Edit(p, 120), p, 600, y) }
 		y = y - 24
+	end
+	local function wide(key, text)
+		At(Label(p, text, "GameFontHighlightSmall"), p, 12, y - 4)
+		y = y - 18
+		fields[#fields + 1] = { key = key, text = true, edit = At(Edit(p, 690), p, 20, y) }
+		y = y - 28
 	end
 	local function check(key, text)
 		fields[#fields + 1] = { key = key, check = At(Check(p, text), p, 8, y) }
@@ -1271,6 +1309,7 @@ AddTab("Options", function(p, tab)
 
 	header("Posting")
 	number("minGap", "Seconds between posts to the same public channel when no campaign is running (minimum " .. DB.MIN_GAP_FLOOR .. ")", DB.MIN_GAP_FLOOR)
+	number("publicSpacing", "Minutes between any two posts to Say, Yell, General or Trade, from every button (0 = off)", 0)
 	word("generalName", "Name of the General channel")
 	word("tradeName", "Name of the Trade channel")
 	header("Campaigns")
@@ -1281,12 +1320,20 @@ AddTab("Options", function(p, tab)
 	number("trackAutoOff", "Contact tracking turns off this many minutes after your last post (0 = never)", 0)
 	number("orderWindow", "A follow-up trade joins the same order for this many minutes", 1)
 	check("promptStrangers", "Offer to record sales to people who are not contacts yet")
+	header("Price quotes")
+	check("quoteSmaller", "Also offer the next smaller, cheaper bag of the same kind")
+	wide("quoteText", "Quote wording.  {name} = who asked,  {item} = the item and its size,  {price} = your price")
+	wide("quoteAlt", "Cheaper option wording, added after the quote.  {alt} = the smaller bag and its size,  {altprice} = its price")
 	header("Follow-up letters")
 	number("outreachGap", "Days before someone you wrote to returns to the top of the follow-up list", 0)
+	header("Window")
+	number("windowScale", "Window size, percent (60 to 150). You can also drag the window's bottom-right corner.", 60, 150)
+	check("showMinimap", "Show the minimap button (click: window, right-click: quick-post bar)")
 	header("Backups  (logging out always saves; this only guards against a crash)")
 	check("saveReminder", "Offer a backup at quiet moments (standing still or resting, never in combat or while trading)")
 	number("saveAfterChanges", "...once this many changes are waiting", 1)
 	number("saveAfterMinutes", "...or once the oldest waiting change is this many minutes old", 1)
+	p:SetHeight(-y + 20)
 
 	local function load()
 		for _, f in ipairs(fields) do
@@ -1295,7 +1342,7 @@ AddTab("Options", function(p, tab)
 		end
 	end
 
-	At(Button(p, "Apply options", 130, function()
+	local apply = Button(outer, "Apply options", 130, function()
 		local s = DB.settings
 		for _, f in ipairs(fields) do
 			if f.check then
@@ -1305,13 +1352,21 @@ AddTab("Options", function(p, tab)
 				if v ~= "" then s[f.key] = v end
 			else
 				local v = tonumber(f.edit:GetText())
-				if v then s[f.key] = math.max(f.min or 0, math.floor(v)) end
+				if v then
+					v = math.max(f.min or 0, math.floor(v))
+					if f.max then v = math.min(f.max, v) end
+					s[f.key] = v
+				end
 			end
 		end
 		load()
+		UI.ApplyScale()
+		UI.UpdateMinimap()
 		UI.Msg("Options applied.")
 		ns.Changed()
-	end), p, 0, y - 10)
+	end)
+	apply:SetPoint("BOTTOMLEFT", outer, "BOTTOMLEFT", 0, 2)
+	At(Label(outer, "Scroll for more options.", "GameFontDisableSmall"), outer, 140, -447)
 
 	function tab.Refresh()
 		if not tab.loaded then tab.loaded = true; load() end
@@ -1478,8 +1533,31 @@ local function build()
 	main.trackInfo = At(Label(main, "", "GameFontHighlightSmall", 400), main, 230, -41)
 	main.save = Button(main, "All saved", 140, function() ns.SaveNow() end)
 	main.save:SetPoint("TOPRIGHT", -14, -36)
-	main.msg = Label(main, "", "GameFontHighlightSmall", 770)
+	main.msg = Label(main, "", "GameFontHighlightSmall", 740)
 	main.msg:SetPoint("BOTTOMLEFT", 14, 10)
+
+	-- Drag the bottom-right corner to make the whole window bigger or smaller.
+	local grip = CreateFrame("Button", nil, main)
+	grip:SetSize(16, 16)
+	grip:SetPoint("BOTTOMRIGHT", -4, 4)
+	grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+	grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+	grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+	grip:SetScript("OnMouseDown", function()
+		local rel = main:GetEffectiveScale() / UIParent:GetEffectiveScale()
+		local left, top = main:GetLeft() * rel, main:GetTop() * rel
+		grip:SetScript("OnUpdate", function()
+			local cx = GetCursorPosition() / UIParent:GetEffectiveScale()
+			local scale = math.min(1.5, math.max(0.6, (cx - left) / 800))
+			main:SetScale(scale)
+			main:ClearAllPoints()
+			main:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left / scale, top / scale)
+		end)
+	end)
+	grip:SetScript("OnMouseUp", function()
+		grip:SetScript("OnUpdate", nil)
+		DB.settings.windowScale = math.floor(main:GetScale() * 100 + 0.5)
+	end)
 
 	for i, name in ipairs(tabOrder) do
 		local tab = tabs[name]
@@ -1496,6 +1574,11 @@ local function build()
 		elapsed = elapsed + dt
 		if elapsed > 5 then elapsed = 0; refreshHeader() end
 	end)
+	UI.ApplyScale()
+end
+
+function UI.ApplyScale()
+	if main then main:SetScale(math.min(1.5, math.max(0.6, (DB.settings.windowScale or 100) / 100))) end
 end
 
 function UI.Refresh()
@@ -1534,30 +1617,48 @@ end
 -- ---------------------------------------------------------------- quick-post bar
 
 local BAR_MAX = 10
+local BAR_TOP = 124 -- where the single-post buttons start
 
 local function refreshBar()
 	if not bar or not bar:IsShown() then return end
 	local posts, now = DB.R.posts, U.Now()
+
+	-- The one-button cycle.
+	local chans = DB.settings.cycleChannels
+	for t, cb in pairs(bar.chanChecks) do cb:SetChecked(chans[t] and true or false) end
+	local post, target, wait, why = M.CycleNext(chans, Chat.Available, now)
+	if post then
+		bar.cycle:SetText("Next: " .. U.Shorten(post.name, 18) .. " > " .. ns.TARGET_LABEL[target])
+		bar.cycle:Enable()
+		local sp = DB.settings.publicSpacing or 0
+		bar.cycleInfo:SetText(sp > 0 and ("One tap sends one message, then a " .. sp .. " minute pause.") or "One tap sends one message.")
+	else
+		bar.cycle:SetText(wait and ("Next post in " .. M.Clock(wait)) or "Nothing to post")
+		bar.cycle:Disable()
+		bar.cycleInfo:SetText(why or "Pausing so the channels are not flooded.")
+	end
+
+	-- One button per post.
 	local shown = math.min(#posts, BAR_MAX)
 	for i = 1, BAR_MAX do
 		local b = bar.buttons[i]
-		local post = posts[i]
-		if post then
-			b.post = post.id
-			local target, why = M.NextTarget(post, Chat.Available, now)
-			b:SetText(U.Shorten(post.name, 18) .. " > " .. (target and ns.TARGET_LABEL[target] or U.Shorten(why or "-", 16)))
-			if target then b:Enable() else b:Disable() end
+		local p = posts[i]
+		if p then
+			b.post = p.id
+			local t, whyNot = M.NextTarget(p, Chat.Available, now)
+			b:SetText(U.Shorten(p.name, 18) .. " > " .. (t and ns.TARGET_LABEL[t] or U.Shorten(whyNot or "-", 18)))
+			if t then b:Enable() else b:Disable() end
 			b:Show()
 		else
 			b:Hide()
 		end
 	end
-	bar.empty:SetText(shown == 0 and "No posts yet.\n/crm to create one." or "")
-	bar:SetHeight(30 + math.max(1, shown) * 24 + (shown == 0 and 10 or 0))
+	bar.empty:SetText(shown == 0 and "No posts yet. /crm to write one." or "")
+	bar:SetHeight(BAR_TOP + 10 + math.max(1, shown) * 24)
 end
 
 local function buildBar()
-	bar = Box(UIParent, 240, 60, 0.85)
+	bar = Box(UIParent, 280, 160, 0.85)
 	local pos = DB.settings.barPos
 	if pos then bar:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else bar:SetPoint("CENTER", 0, -200) end
 	bar:EnableMouse(true)
@@ -1574,10 +1675,29 @@ local function buildBar()
 	local close = CreateFrame("Button", nil, bar, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT", 2, 2)
 	close:SetScript("OnClick", function() UI.ToggleBar() end)
-	bar.empty = At(Label(bar, "", "GameFontHighlightSmall", 220), bar, 10, -26)
+
+	bar.cycle = At(Button(bar, "", 260, function()
+		local ok, res = Chat.CycleSend(DB.settings.cycleChannels)
+		if not ok then ns.Print(res) end
+		refreshBar()
+	end), bar, 10, -26)
+	bar.cycle:SetHeight(30)
+	bar.cycleInfo = At(Label(bar, "", "GameFontDisableSmall", 260), bar, 10, -60)
+	bar.chanChecks = {}
+	for i, t in ipairs(ns.CYCLE_CHANNELS) do
+		local cb = At(Check(bar, ns.TARGET_LABEL[t]), bar, 8 + (i - 1) * 86, -74)
+		cb:SetScript("OnClick", function(self)
+			DB.settings.cycleChannels[t] = self:GetChecked() and true or false
+			refreshBar()
+		end)
+		bar.chanChecks[t] = cb
+	end
+	At(Label(bar, "Or send one post now:", "GameFontDisableSmall"), bar, 10, -104)
+
+	bar.empty = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -BAR_TOP)
 	bar.buttons = {}
 	for i = 1, BAR_MAX do
-		local b = At(Button(bar, "", 220), bar, 10, -24 - (i - 1) * 24)
+		local b = At(Button(bar, "", 260), bar, 10, -BAR_TOP - (i - 1) * 24)
 		b:SetScript("OnClick", function(self)
 			local post = self.post and M.GetPost(self.post)
 			if not post then return end
@@ -1600,6 +1720,116 @@ function UI.ToggleBar()
 	if bar:IsShown() then bar:Hide() else bar:Show() end
 	DB.settings.barShown = bar:IsShown() and true or false
 	refreshBar()
+end
+
+-- ---------------------------------------------------------------- minimap button
+
+local mm
+
+local function placeMinimap()
+	local angle = math.rad(DB.settings.minimapAngle or 200)
+	local r = ((Minimap:GetWidth() or 140) / 2) + 6
+	mm:ClearAllPoints()
+	mm:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * r, math.sin(angle) * r)
+end
+
+function UI.UpdateMinimap()
+	if not mm then return end
+	if DB.settings.showMinimap then mm:Show() else mm:Hide() end
+end
+
+local function buildMinimap()
+	if mm or not Minimap then return end
+	mm = CreateFrame("Button", "WoWCRMMinimapButton", Minimap)
+	mm:SetSize(31, 31)
+	mm:SetFrameStrata("MEDIUM")
+	mm:SetFrameLevel(8)
+	mm:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	mm:RegisterForDrag("LeftButton")
+	mm:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+	local bg = mm:CreateTexture(nil, "BACKGROUND")
+	bg:SetSize(20, 20)
+	bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+	bg:SetPoint("TOPLEFT", 7, -5)
+	local icon = mm:CreateTexture(nil, "ARTWORK")
+	icon:SetSize(17, 17)
+	icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+	icon:SetPoint("TOPLEFT", 7, -6)
+	local border = mm:CreateTexture(nil, "OVERLAY")
+	border:SetSize(53, 53)
+	border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+	border:SetPoint("TOPLEFT")
+	mm:SetScript("OnClick", function(_, button)
+		if button == "RightButton" then UI.ToggleBar() else UI.Toggle() end
+	end)
+	mm:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+		GameTooltip:AddLine("WoW CRM")
+		GameTooltip:AddLine("Click: open the window\nRight-click: quick-post bar\nDrag: move this button", 1, 1, 1)
+		GameTooltip:Show()
+	end)
+	mm:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	mm:SetScript("OnDragStart", function(self)
+		self:SetScript("OnUpdate", function()
+			local mx, my = Minimap:GetCenter()
+			local cx, cy = GetCursorPosition()
+			local scale = Minimap:GetEffectiveScale()
+			local atan2 = math.atan2 or math.atan
+			DB.settings.minimapAngle = math.deg(atan2(cy / scale - my, cx / scale - mx))
+			placeMinimap()
+		end)
+	end)
+	mm:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+	placeMinimap()
+	UI.UpdateMinimap()
+end
+
+-- ---------------------------------------------------------------- the game's AddOns settings list
+
+local function registerSettings()
+	local panel = CreateFrame("Frame")
+	panel.name = "WoW CRM"
+	At(Label(panel, "WoW CRM", "GameFontNormalLarge"), panel, 16, -16)
+	At(Label(panel, "Customers, posts, campaigns and orders. Most settings are on the Options tab of the WoW CRM window.", "GameFontHighlight", 580), panel, 16, -46)
+	local function openThen(fn)
+		return function()
+			if SettingsPanel and SettingsPanel:IsShown() and HideUIPanel then HideUIPanel(SettingsPanel) end
+			fn()
+		end
+	end
+	At(Button(panel, "Open WoW CRM", 160, openThen(function() UI.Show() end)), panel, 16, -84)
+	At(Button(panel, "Open the Options tab", 160, openThen(function() UI.Show("Options") end)), panel, 182, -84)
+	At(Button(panel, "Quick-post bar", 160, openThen(function() UI.ToggleBar() end)), panel, 348, -84)
+	if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
+		local category = Settings.RegisterCanvasLayoutCategory(panel, "WoW CRM")
+		Settings.RegisterAddOnCategory(category)
+	elseif InterfaceOptions_AddCategory then
+		InterfaceOptions_AddCategory(panel)
+	end
+end
+
+-- ---------------------------------------------------------------- copyable link
+-- Add-ons cannot open a web browser, so web addresses are shown ready to copy.
+
+local linkBox
+
+function UI.ShowLink(title, url)
+	if not linkBox then
+		linkBox = Box(UIParent, 440, 112, 0.95)
+		linkBox:SetPoint("CENTER", 0, 160)
+		linkBox:SetFrameStrata("DIALOG")
+		linkBox:EnableMouse(true)
+		linkBox.title = At(Label(linkBox, "", "GameFontNormal", 410), linkBox, 14, -12)
+		At(Label(linkBox, "Press Ctrl+C to copy, then paste it into your web browser.", "GameFontHighlightSmall", 410), linkBox, 14, -32)
+		linkBox.edit = At(Edit(linkBox, 404), linkBox, 20, -52)
+		linkBox.edit:SetScript("OnEscapePressed", function() linkBox:Hide() end)
+		At(Button(linkBox, "Close", 80, function() linkBox:Hide() end), linkBox, 346, -80)
+	end
+	linkBox.title:SetText(title)
+	linkBox.edit:SetText(url)
+	linkBox:Show()
+	linkBox.edit:SetFocus()
+	linkBox.edit:HighlightText()
 end
 
 -- ---------------------------------------------------------------- probe window
@@ -1647,6 +1877,8 @@ ns.On("BAG_UPDATE_DELAYED", function()
 end)
 
 ns.On("PLAYER_LOGIN", function()
+	buildMinimap()
+	registerSettings()
 	if M.ActiveCampaign(U.Now()) then UI.ShowCampaignBar() end
 	if DB.settings and DB.settings.barShown then
 		buildBar()

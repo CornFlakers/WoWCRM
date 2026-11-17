@@ -105,6 +105,9 @@ function GetTradeTargetItemLink(i) if i == 1 and tGet then return link(tGet[1]) 
 function GetTradeTargetItemInfo(i) if i == 1 and tGet then return tGet[1], nil, tGet[2] end end
 Auctionator = { API = { v1 = { GetAuctionPriceByItemLink = function() return 250 end, GetAuctionPriceByItemID = function() return 250 end } } }
 function UnitGUID() return "Player-1" end
+C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "Bag" }, { leftText = id == 14046 and "14 Slot Bag" or "Binds when equipped" } } } end }
+local opened = {}
+function ChatFrame_OpenChat(text) opened[#opened + 1] = text end
 function GetItemCount(id) return id == 14048 and 12 or 0 end
 function PlaySound() end
 MastercraftDB = { recipes = { ["Player-1"] = {
@@ -451,6 +454,20 @@ click("Add to my products", prod)
 eq(DB.R.products["Tailoring|Runecloth Bag"] ~= nil, true, "recipe marked as my product")
 eq(find("Remove from my products", prod) ~= nil, true, "button flips once it is a product")
 row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
+eq(row("Runecloth Bag").item.slots, 14, "bag size read from the tooltip")
+local headers = 0
+for _, w in ipairs(widgets) do if type(w.item) == "table" and w.item.header and inside(w, prod) and w._shown then headers = headers + 1 end end
+eq(headers, 2, "recipes are laid out under a heading per category")
+row("Runecloth Bag")._scripts.OnClick(row("Runecloth Bag"))
+local pe = kind("EditBox", prod) -- search, my price
+pe[2]:SetText("2g")
+click("Set", prod)
+eq(DB.R.products["Tailoring|Runecloth Bag"].price, 20000, "your price saved")
+click("Quote", prod)
+eq(opened[#opened], "/r Runecloth Bag (14 slot) 2g", "quote placed in chat as a reply")
+click("Quote list", prod)
+eq(opened[#opened]:find("Runecloth Bag (14 slot) 2g", 1, true) ~= nil, true, "price list placed in chat as a reply")
+row("Silk Reagent Bag")._scripts.OnClick(row("Silk Reagent Bag"))
 local flagged = false
 for _, w in ipairs(widgets) do if w._kind == "FontString" and w._text:find("made by Alchemy", 1, true) then flagged = true end end
 eq(flagged, true, "material made by another profession is flagged")
@@ -483,6 +500,7 @@ eq(DB.R.tracking.on, true, "tracking survives a reload")
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,
 	SLASH_WOWCRM1 = true, SLASH_WOWCRM2 = true,
+	WoWCRMScanTooltip = true, -- hidden tooltip used to read bag sizes
 }
 for k in pairs(_G) do
 	if not globalsBefore[k] and not allowed[k] then error("unexpected global: " .. tostring(k)) end

@@ -398,7 +398,7 @@ local prows = Cat.Build({
 	{ id = 2, name = "Reagent Bag", category = "Specialty Bags", learned = false, output = 11, reagents = { { itemID = 1, qty = 2 }, { itemID = 2, qty = 1 } } },
 	{ id = 3, name = "Bolt", category = "", learned = true, reagents = {} },
 }, "Tailoring", function(i) return cost[i] or 0 end, { ["Silk Bag"] = 3 }, { ["Tailoring|Silk Bag"] = true },
-	function(i) return ({ [1] = 9, [2] = 0 })[i] or 0 end)
+	function(i) return ({ [1] = 9, [2] = 0 })[i] or 0 end, function(i) return ({ [10] = 10, [11] = 20 })[i] end)
 eq(#prows, 3, "rows built")
 eq(prows[1].mats, 400, "materials cost")
 eq(prows[1].sale, 1000, "sale value")
@@ -413,7 +413,11 @@ eq(prows[3].canMake, 0, "a recipe with no materials listed is not counted as cra
 eq(#Cat.Filter(prows, { craftableOnly = true }), 1, "craftable now")
 eq(#Cat.Filter(prows, { craftableOnly = true, learnedOnly = true }), 1, "craftable and learned together")
 eq(Cat.Sort(Cat.Filter(prows, {}), "can make")[1].name, "Silk Bag", "sort by how many you can make")
-eq(table.concat(Cat.Categories(prows), ","), "All,Bags,Other,Specialty Bags", "categories")
+eq(table.concat(Cat.Categories(prows), ","), "All,All bags,Bags,Other,Specialty Bags", "categories, with every kind of bag together")
+eq(#Cat.Filter(prows, { category = Cat.ALL_BAGS }), 2, "All bags covers bags and specialty bags")
+eq(prows[1].slots, 10, "bag size read")
+eq(prows[3].slots, nil, "non-bags have no size")
+eq(Cat.Sort(Cat.Filter(prows, {}), "bag size")[1].name, "Reagent Bag", "biggest bag first")
 eq(#Cat.Filter(prows, { learnedOnly = true }), 2, "learned only")
 eq(#Cat.Filter(prows, { category = "Specialty Bags" }), 1, "by category")
 eq(#Cat.Filter(prows, { search = "BAG" }), 2, "search ignores case")
@@ -422,7 +426,27 @@ eq(Cat.Sort(Cat.Filter(prows, {}), "margin")[1].name, "Silk Bag", "sort by margi
 eq(Cat.Sort(Cat.Filter(prows, {}), "mats cost")[1].name, "Bolt", "sort by materials cost, cheapest first")
 eq(Cat.Sort(Cat.Filter(prows, {}), "sale value")[1].name, "Silk Bag", "sort by sale value")
 eq(Cat.Sort(Cat.Filter(prows, {}), "name")[1].name, "Bolt", "sort by name")
-eq(Cat.Sort(Cat.Filter(prows, {}), "category")[3].name, "Reagent Bag", "sort by category")
+local grouped = Cat.Group(Cat.Filter(prows, { category = Cat.ALL_BAGS }), "margin")
+eq(#grouped, 4, "two headings and two recipes")
+eq(grouped[1].header, true, "heading first")
+eq(grouped[1].name, "Bags", "headings in order")
+eq(grouped[2].name, "Silk Bag", "recipes under their heading")
+eq(grouped[3].name, "Specialty Bags", "second heading")
+eq(#Cat.Group(Cat.Filter(prows, { category = "Bags" }), "name"), 1, "one category needs no heading")
+eq(Cat.Quote(prows[1]), "Silk Bag (10 slot) 10s", "quote from the auction price")
+eq(Cat.Quote(prows[3]), nil, "no quote without a price")
+local priced = Cat.Build({
+	{ id = 1, name = "Silk Bag", category = "Bags", learned = true, output = 10, reagents = { { itemID = 1, qty = 4 } } },
+	{ id = 2, name = "Big Bag", category = "Bags", learned = true, output = 11, reagents = { { itemID = 1, qty = 9 } } },
+}, "Tailoring", function(i) return cost[i] or 0 end, {}, { ["Tailoring|Silk Bag"] = { price = 2500 } }, nil, function(i) return ({ [10] = 10, [11] = 14 })[i] end)
+eq(priced[1].price, 2500, "your own price is what gets quoted")
+eq(priced[1].margin, 2100, "margin uses your own price")
+eq(Cat.Quote(priced[1]), "Silk Bag (10 slot) 25s", "quote from your price")
+local qtext, qn = Cat.QuoteList(Cat.Group(priced, "bag size"), 252)
+eq(qtext, "Big Bag (14 slot) 3s, Silk Bag (10 slot) 25s", "price list, biggest first")
+eq(qn, 2, "both items quoted")
+qtext, qn = Cat.QuoteList(priced, 30)
+eq(qn, 1, "price list stops before it would be too long for chat")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

@@ -43,7 +43,7 @@ end
 local cache = {}
 local CACHE_SECONDS = 120
 
-function Price.Reset() cache = {} end
+function Price.Reset() cache = {}; if Price.ResetSlots then Price.ResetSlots() end end
 
 function Price.GetByID(itemID)
 	itemID = tonumber(itemID)
@@ -86,3 +86,56 @@ function Price.ItemName(itemID)
 	end
 	return "item " .. tostring(itemID)
 end
+
+-- ---------------------------------------------------------------- bag sizes
+-- The number of slots is only written in the item's tooltip ("16 Slot Bag"), so read it there.
+
+local slotCache = {}
+local scanTip
+
+local function slotsIn(text)
+	if type(text) ~= "string" then return nil end
+	return tonumber(text:match("(%d+)[%- ][Ss]lot"))
+end
+
+function Price.BagSlots(itemID)
+	itemID = tonumber(itemID)
+	if not itemID then return nil end
+	if slotCache[itemID] ~= nil then return slotCache[itemID] or nil end
+	local n
+	if C_TooltipInfo and C_TooltipInfo.GetItemByID then
+		local ok, data = pcall(C_TooltipInfo.GetItemByID, itemID)
+		if ok and type(data) == "table" and type(data.lines) == "table" then
+			for _, line in ipairs(data.lines) do
+				n = slotsIn(line.leftText)
+				if n then break end
+			end
+		end
+	end
+	if not n and GameTooltip and UIParent then
+		scanTip = scanTip or CreateFrame("GameTooltip", "WoWCRMScanTooltip", nil, "GameTooltipTemplate")
+		scanTip:SetOwner(UIParent, "ANCHOR_NONE")
+		if pcall(scanTip.SetHyperlink, scanTip, "item:" .. itemID) then
+			for i = 2, 10 do
+				local fs = _G["WoWCRMScanTooltipTextLeft" .. i]
+				n = fs and slotsIn(fs:GetText())
+				if n then break end
+			end
+		end
+	end
+	-- Remember "not a bag" only once the game has the item loaded; before that, try again later.
+	local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	local loaded = getInfo and select(2, pcall(getInfo, itemID)) ~= nil
+	if n or loaded then slotCache[itemID] = n or false end
+	return n
+end
+
+function Price.ItemLink(itemID)
+	local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	if getInfo then
+		local ok, _, link = pcall(getInfo, itemID)
+		if ok and type(link) == "string" then return link end
+	end
+end
+
+function Price.ResetSlots() slotCache = {} end

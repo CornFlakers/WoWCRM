@@ -119,6 +119,14 @@ ns.On("CHAT_MSG_WHISPER_INFORM", function(_, target)
 	if c then c.lastContact = U.Now() end
 end)
 
+-- Opens the chat box with a reply to the last person who whispered, ready to read and send.
+function Chat.Reply(text)
+	local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+	if not open then return false end
+	open("/r " .. text)
+	return true
+end
+
 function Chat.Whisper(key)
 	local name = U.Display(key, DB.realm)
 	if ChatFrameUtil and ChatFrameUtil.SendTell then

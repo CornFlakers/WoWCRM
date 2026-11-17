@@ -946,7 +946,11 @@ AddTab("Products", function(p, tab)
 	craftable:SetScript("OnClick", function() tab.Refresh() end)
 	learned:SetScript("OnClick", function() tab.Refresh() end)
 	mine:SetScript("OnClick", function() tab.Refresh() end)
-	local list = At(List(p, 776, 280, function(item) sel = item.id; tab.Refresh() end), p, 0, -50)
+	local list = At(List(p, 776, 280, function(item)
+		if item.header then return end
+		sel = item.id
+		tab.Refresh()
+	end), p, 0, -50)
 	local detail = At(Label(p, "", "GameFontHighlightSmall", 770), p, 4, -338)
 	local current
 
@@ -961,7 +965,37 @@ AddTab("Products", function(p, tab)
 		ns.Changed()
 	end), p, 0, -446)
 	At(Button(p, "Refresh prices", 120, function() Price.Reset(); tab.Refresh() end), p, 196, -446)
-	local count = At(Label(p, "", "GameFontDisableSmall", 440), p, 326, -451)
+	local count = At(Label(p, "", "GameFontDisableSmall", 370), p, 404, -29)
+	local shownRows, loadedFor = {}, nil
+
+	-- Your own asking price for the selected recipe, and quick replies built from it.
+	At(Label(p, "My price", "GameFontHighlightSmall"), p, 326, -451)
+	local myPrice = At(Edit(p, 80), p, 382, -447)
+	At(Button(p, "Set", 44, function()
+		if not current then return end
+		local v = U.ParseMoney(myPrice:GetText())
+		if not v then UI.Msg("Price not understood. Use a form like 2g 50s.", true) return end
+		local key = ns.Catalog.Key(current.profession, current.name)
+		local entry = DB.R.products[key] or { name = current.name, profession = current.profession, output = current.output }
+		entry.price = v > 0 and v or nil
+		DB.R.products[key] = entry
+		UI.Msg(v > 0 and ("Your price for " .. current.name .. " is " .. U.FormatMoney(v) .. ".") or "Your price cleared; the auction price is used.")
+		ns.Changed()
+	end), p, 468, -446)
+	At(Button(p, "Quote", 64, function()
+		if not current then UI.Msg("Click a recipe first.", true) return end
+		local text = ns.Catalog.Quote(current, current.output and Price.ItemLink(current.output))
+		if text and #text > ns.MAX_CHAT_BYTES - 3 then text = ns.Catalog.Quote(current) end
+		if not text then UI.Msg("No price yet. Type one in My price and press Set.", true) return end
+		Chat.Reply(text)
+		UI.Msg("Quote placed in the chat box as a reply to your last whisper. Press Enter to send.")
+	end), p, 516, -446)
+	At(Button(p, "Quote list", 90, function()
+		local text, n = ns.Catalog.QuoteList(shownRows, ns.MAX_CHAT_BYTES - 3)
+		if n == 0 then UI.Msg("Nothing in this list has a price yet.", true) return end
+		Chat.Reply(text)
+		UI.Msg(("Price list of %d items placed in the chat box as a reply. Press Enter to send."):format(n))
+	end), p, 584, -446)
 
 	local function source()
 		local db = rawget(_G, "MastercraftDB")
@@ -1013,20 +1047,29 @@ AddTab("Products", function(p, tab)
 		end
 
 		local rows = ns.Catalog.Build(src[prof.value].list, prof.value, function(id) return (Price.GetByID(id)) end,
-			M.SoldCounts(), DB.R.products, inBags)
+			M.SoldCounts(), DB.R.products, inBags, Price.BagSlots)
 		cat:SetList(ns.Catalog.Categories(rows))
-		local shown = ns.Catalog.Sort(ns.Catalog.Filter(rows, {
+		local filtered = ns.Catalog.Filter(rows, {
 			category = cat.value, learnedOnly = learned:GetChecked(), craftableOnly = craftable:GetChecked(),
 			productsOnly = mine:GetChecked(), search = search:GetText(),
-		}), sort.value)
+		})
+		local shown = ns.Catalog.Group(filtered, sort.value)
+		shownRows = shown
 		list:Set(shown, function(r)
-			return (r.product and "|cffffd100*|r " or "") .. r.name .. "  |cff888888" .. r.category .. (r.learned and "" or ", not learned") .. "|r",
-				(r.canMake > 0 and ("|cff40ff40can make " .. r.canMake .. "|r    ") or "") .. ("mats %s    sells %s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
-					r.sale > 0 and ((r.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(r.margin))) or "?", r.sold)
+			if r.header then return "|cffffd100" .. r.name .. "|r  |cff888888(" .. r.count .. ")|r", "" end
+			return "   " .. (r.product and "|cffffd100*|r " or "") .. r.name .. (r.slots and ("  |cff80c0ff" .. r.slots .. " slot|r") or "")
+					.. (r.learned and "" or "  |cff888888not learned|r"),
+				(r.canMake > 0 and ("|cff40ff40can make " .. r.canMake .. "|r    ") or "") .. ("mats %s    AH %s%s    margin %s    sold %d"):format(money(r.mats), money(r.sale),
+					r.myPrice and ("    |cffffd100yours " .. U.FormatMoney(r.myPrice) .. "|r") or "",
+					r.price > 0 and ((r.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(r.margin))) or "?", r.sold)
 		end, sel)
-		count:SetText(("%d of %d recipes shown. * marks your products. Prices: TradeSkillMaster, Auctionator or vendor."):format(#shown, #rows))
+		count:SetText(("%d of %d recipes. * = your products. Margin uses your price when set."):format(#filtered, #rows))
 
-		for _, r in ipairs(shown) do if r.id == sel then current = r end end
+		for _, r in ipairs(shown) do if not r.header and r.id == sel then current = r end end
+		if loadedFor ~= sel then
+			loadedFor = sel
+			SetEdit(myPrice, current and current.myPrice and U.FormatMoney(current.myPrice) or "")
+		end
 		if not current then
 			toggle:Disable()
 			detail:SetText("Click a recipe to see its materials. Mark the things you sell as your products to find them quickly.")
@@ -1043,9 +1086,10 @@ AddTab("Products", function(p, tab)
 				g.have >= g.qty and "40ff40" or "ff6060", g.have, money(g.each), money(g.each * g.qty),
 				makers[g.itemID] and ("    |cffffd100made by " .. makers[g.itemID] .. "|r") or "")
 		end
-		L[#L + 1] = ("Materials %s%s    Sells for %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),
+		L[#L + 1] = ("Materials %s%s    Auction price %s    Your price %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),
 			current.unpriced > 0 and (" (" .. current.unpriced .. " without a price)") or "", money(current.sale),
-			current.sale > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?", current.sold)
+			current.myPrice and U.FormatMoney(current.myPrice) or "not set",
+			current.price > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?", current.sold)
 		detail:SetText(table.concat(L, "\n"))
 	end
 end)

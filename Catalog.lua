@@ -5,7 +5,10 @@ local U = ns.Util
 local Cat = {}
 ns.Catalog = Cat
 
-Cat.SORTS = { "name", "category", "mats cost", "sale value", "margin", "times sold", "can make" }
+Cat.SORTS = { "name", "margin", "bag size", "mats cost", "sale value", "times sold", "can make" }
+Cat.ALL_BAGS = "All bags"
+
+local function isBag(category) return category:lower():find("bag", 1, true) ~= nil end
 
 function Cat.Key(profession, name)
 	return profession .. "|" .. name
@@ -15,7 +18,9 @@ end
 -- priceOf(itemID) -> copper (0 when unknown)
 -- sold: item name -> quantity sold;  products: key -> anything, for recipes marked as "my products"
 -- countOf(itemID) -> how many are in the player's bags right now (optional)
-function Cat.Build(recipes, profession, priceOf, sold, products, countOf)
+-- slotsOf(itemID) -> number of slots when the item is a bag (optional)
+-- A product's own asking price, when set, is used for the margin instead of the auction price.
+function Cat.Build(recipes, profession, priceOf, sold, products, countOf, slotsOf)
 	local rows = {}
 	for _, r in ipairs(recipes or {}) do
 		if type(r) == "table" and r.name then
@@ -39,9 +44,13 @@ function Cat.Build(recipes, profession, priceOf, sold, products, countOf)
 			-- How many crafts the materials in your bags cover right now (the scarcest material decides).
 			row.canMake = canMake or 0
 			row.sale = row.output and (priceOf(row.output) or 0) * row.outputQty or 0
-			row.margin = row.sale > 0 and (row.sale - row.mats) or 0
+			local mine = products and products[Cat.Key(profession, r.name)]
+			row.product = mine and true or false
+			row.myPrice = type(mine) == "table" and tonumber(mine.price) or nil
+			row.price = row.myPrice or row.sale -- what a customer would be quoted
+			row.margin = row.price > 0 and (row.price - row.mats) or 0
 			row.sold = (sold and sold[r.name]) or 0
-			row.product = (products and products[Cat.Key(profession, r.name)]) and true or false
+			if slotsOf and row.output and isBag(row.category) then row.slots = tonumber(slotsOf(row.output)) end
 			rows[#rows + 1] = row
 		end
 	end
@@ -55,6 +64,9 @@ function Cat.Categories(rows)
 		if not seen[r.category] then seen[r.category] = true; out[#out + 1] = r.category end
 	end
 	table.sort(out)
+	local bags = 0
+	for _, c in ipairs(out) do if isBag(c) then bags = bags + 1 end end
+	if bags >= 2 then table.insert(out, 1, Cat.ALL_BAGS) end
 	table.insert(out, 1, "All")
 	return out
 end
@@ -64,7 +76,8 @@ function Cat.Filter(rows, opts)
 	local q = U.Trim(opts.search):lower()
 	local out = {}
 	for _, r in ipairs(rows) do
-		local ok = (not opts.category or opts.category == "All" or r.category == opts.category)
+		local ok = (not opts.category or opts.category == "All" or r.category == opts.category
+				or (opts.category == Cat.ALL_BAGS and isBag(r.category)))
 			and (not opts.learnedOnly or r.learned)
 			and (not opts.productsOnly or r.product)
 			and (not opts.craftableOnly or r.canMake >= 1)
@@ -78,8 +91,9 @@ end
 function Cat.Sort(rows, by)
 	local function cmp(a, b)
 		local x, y
-		if by == "category" then x, y = a.category, b.category
-			if x ~= y then return x < y end
+		if by == "bag size" then
+			x, y = a.slots or 0, b.slots or 0
+			if x ~= y then return x > y end
 		elseif by == "mats cost" then
 			if a.mats ~= b.mats then return a.mats < b.mats end
 		elseif by == "sale value" then
@@ -96,4 +110,45 @@ function Cat.Sort(rows, by)
 	end
 	table.sort(rows, cmp)
 	return rows
+end
+
+-- Sorts the rows, then lays them out under a heading per category:
+-- { header = true, name = "Bags", count = 3 }, row, row, row, { header = true, ... }, ...
+-- With only one category there are no headings.
+function Cat.Group(rows, by)
+	Cat.Sort(rows, by)
+	local order, groups = {}, {}
+	for _, r in ipairs(rows) do
+		if not groups[r.category] then groups[r.category] = {}; order[#order + 1] = r.category end
+		table.insert(groups[r.category], r)
+	end
+	if #order <= 1 then return rows end
+	table.sort(order)
+	local out = {}
+	for _, c in ipairs(order) do
+		out[#out + 1] = { header = true, id = "header:" .. c, name = c, count = #groups[c] }
+		for _, r in ipairs(groups[c]) do out[#out + 1] = r end
+	end
+	return out
+end
+
+-- "Runecloth Bag (14 slot) 3g". label lets the caller pass an item link instead of the name.
+function Cat.Quote(row, label)
+	if not row.price or row.price <= 0 then return nil end
+	return (label or row.name) .. (row.slots and (" (" .. row.slots .. " slot)") or "") .. " " .. U.FormatMoney(row.price)
+end
+
+-- A one-message price list from the given rows, in their order, that fits in maxBytes.
+-- Rows without a price are left out. Returns the text and how many items made it in.
+function Cat.QuoteList(rows, maxBytes)
+	local text, n = "", 0
+	for _, r in ipairs(rows) do
+		local q = (not r.header) and Cat.Quote(r)
+		if q then
+			local nextText = text == "" and q or (text .. ", " .. q)
+			if #nextText > maxBytes then break end
+			text, n = nextText, n + 1
+		end
+	end
+	return text, n
 end

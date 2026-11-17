@@ -114,9 +114,10 @@ function UnitGUID() return "Player-1" end
 C_TooltipInfo = { GetItemByID = function(id) return { lines = { { leftText = "Bag" }, { leftText = id == 14046 and "14 Slot Bag" or "Binds when equipped" } } } end }
 local opened = {}
 function ChatFrame_OpenChat(text) opened[#opened + 1] = text end
-function GetItemCount(id) return id == 14048 and 12 or 0 end
+function GetItemCount(id, withBank) return id == 14048 and (withBank and 20 or 12) or 0 end
+BrotherBags = { forever = { ["Bag Makers*"] = { { items = { "14048;25" } } } } }
 function PlaySound() end
-MastercraftDB = { recipes = { ["Player-1"] = {
+MastercraftDB = { inv = { ["Player-1"] = { bags = {}, bank = { [14048] = 8 } }, ["Player-2"] = { bags = { [14048] = 5 }, bank = { [14048] = 10 } } }, recipes = { ["Player-1"] = {
 	Tailoring = { list = {
 		{ id = 1, name = "Runecloth Bag", category = "Bags", learned = true, output = 14046, outputQty = 1, reagents = { { itemID = 14048, qty = 5 } } },
 		{ id = 2, name = "Silk Reagent Bag", category = "Specialty Bags", learned = false, output = 500, reagents = { { itemID = 900, qty = 1 } } },
@@ -130,7 +131,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	line = line:gsub("%s+$", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
-assert(#files == 10, "TOC should list 10 files, found " .. #files)
+assert(#files == 11, "TOC should list 11 files, found " .. #files)
 local globalsBefore = { codAmount = true }
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
@@ -448,7 +449,20 @@ local function row(name)
 end
 eq(row("Runecloth Bag") ~= nil, true, "recipes listed for the chosen profession")
 eq(row("Runecloth Bag").item.canMake, 2, "12 cloth in bags at 5 each makes 2")
-local boxes = kind("CheckButton", prod) -- learned, craftable, my products
+local boxes = kind("CheckButton", prod) -- learned, have the mats, my products, then the five places to count
+eq(#boxes, 8, "three filters and five places to count")
+local function tick(i, on) boxes[i]:SetChecked(on); boxes[i]._scripts.OnClick(boxes[i]) end
+tick(5, true)
+eq(row("Runecloth Bag").item.canMake, 4, "adding my bank: 20 cloth makes 4")
+tick(6, true)
+eq(row("Runecloth Bag").item.canMake, 5, "adding other characters' bags")
+tick(7, true)
+eq(row("Runecloth Bag").item.canMake, 7, "adding other characters' banks")
+tick(8, true)
+eq(row("Runecloth Bag").item.canMake, 12, "adding the guild bank")
+eq(DB.settings.invSources.guild, true, "the choice is remembered")
+tick(5, false); tick(6, false); tick(7, false); tick(8, false)
+eq(row("Runecloth Bag").item.canMake, 2, "back to bags only")
 boxes[2]:SetChecked(true)
 boxes[2]._scripts.OnClick(boxes[2])
 eq(row("Silk Reagent Bag"), nil, "Craftable now hides what you lack materials for")

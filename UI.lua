@@ -941,16 +941,27 @@ AddTab("Products", function(p, tab)
 	local search = At(Edit(p, 130), p, 514, -1)
 	search:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
 	local learned = At(Check(p, "Learned only"), p, 0, -24)
-	local craftable = At(Check(p, "Craftable now"), p, 130, -24)
+	local craftable = At(Check(p, "Have the mats"), p, 130, -24)
 	local mine = At(Check(p, "My products only"), p, 270, -24)
 	craftable:SetScript("OnClick", function() tab.Refresh() end)
 	learned:SetScript("OnClick", function() tab.Refresh() end)
 	mine:SetScript("OnClick", function() tab.Refresh() end)
-	local list = At(List(p, 776, 280, function(item)
+	local list = At(List(p, 776, 258, function(item)
 		if item.header then return end
 		sel = item.id
 		tab.Refresh()
-	end), p, 0, -50)
+	end), p, 0, -72)
+	-- Which places count towards "have the mats". Remembered between sessions.
+	At(Label(p, "Count mats in:", "GameFontHighlightSmall"), p, 4, -52)
+	local sourceChecks = {}
+	for i, src in ipairs(ns.Inventory.SOURCES) do
+		local cb = At(Check(p, ns.Inventory.LABEL[src]), p, 96 + (i - 1) * 118, -46)
+		cb:SetScript("OnClick", function(self)
+			DB.settings.invSources[src] = self:GetChecked() and true or false
+			tab.Refresh()
+		end)
+		sourceChecks[src] = cb
+	end
 	local detail = At(Label(p, "", "GameFontHighlightSmall", 770), p, 4, -338)
 	local current
 
@@ -1013,13 +1024,20 @@ AddTab("Products", function(p, tab)
 
 	local function money(v) return v > 0 and U.FormatMoney(v) or "?" end
 
-	-- What is in your bags right now. The bank is not counted: you could not craft from it here.
+	-- What the game itself knows about this character: bags now, and the bank as last seen.
 	local function inBags(itemID)
 		local get = (C_Item and C_Item.GetItemCount) or GetItemCount
 		if not get then return 0 end
 		local ok, n = pcall(get, itemID)
 		return ok and tonumber(n) or 0
 	end
+	local function inBank(itemID)
+		local get = (C_Item and C_Item.GetItemCount) or GetItemCount
+		if not get then return 0 end
+		local ok, n = pcall(get, itemID, true)
+		return math.max(0, (ok and tonumber(n) or 0) - inBags(itemID))
+	end
+	local partsOf = function() return "none" end
 
 	-- Item id -> the profession that makes it, across every character Mastercraft has scanned.
 	local function craftedBy()
@@ -1053,8 +1071,16 @@ AddTab("Products", function(p, tab)
 			return
 		end
 
+		local mc, enabled = rawget(_G, "MastercraftDB"), DB.settings.invSources
+		for name, cb in pairs(sourceChecks) do cb:SetChecked(enabled[name] and true or false) end
+		local held = ns.Inventory.Collect({
+			mastercraft = type(mc) == "table" and mc.inv or nil, guid = UnitGUID and UnitGUID("player"),
+			brother = rawget(_G, "BrotherBags"), name = UnitName("player"),
+		})
+		local countOf
+		countOf, partsOf = ns.Inventory.Counter(held, enabled, inBags, inBank)
 		local rows = ns.Catalog.Build(src[prof.value].list, prof.value, function(id) return (Price.GetByID(id)) end,
-			M.SoldCounts(), DB.R.products, inBags, Price.BagSlots)
+			M.SoldCounts(), DB.R.products, countOf, Price.BagSlots)
 		cat:SetList(ns.Catalog.Categories(rows))
 		local filtered = ns.Catalog.Filter(rows, {
 			category = cat.value, learnedOnly = learned:GetChecked(), craftableOnly = craftable:GetChecked(),
@@ -1086,7 +1112,7 @@ AddTab("Products", function(p, tab)
 		toggle:SetText(current.product and "Remove from my products" or "Add to my products")
 		local L = { ("|cffffd100%s|r  -  %s, %s%s    %s"):format(current.name, current.category, current.learned and "learned" or "not learned",
 			current.outputQty > 1 and (", makes " .. current.outputQty) or "",
-			current.canMake > 0 and ("|cff40ff40Materials in your bags for " .. current.canMake .. "|r") or "You do not have all the materials in your bags") }
+			current.canMake > 0 and ("|cff40ff40You hold the materials for " .. current.canMake .. "|r") or "You do not hold all the materials in the places ticked above") }
 		if not current.learned then
 			local how = type(current.id) == "number" and Price.RecipeSource(current.id)
 			L[#L + 1] = how and ("|cffffd100How to get this pattern:|r " .. how)
@@ -1094,8 +1120,8 @@ AddTab("Products", function(p, tab)
 		end
 		local makers = craftedBy()
 		for _, g in ipairs(current.reagents) do
-			L[#L + 1] = ("   %dx %s    |cff%s(have %d)|r    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID),
-				g.have >= g.qty and "40ff40" or "ff6060", g.have, money(g.each), money(g.each * g.qty),
+			L[#L + 1] = ("   %dx %s    |cff%s(have %d: %s)|r    %s each = %s%s"):format(g.qty, Price.ItemName(g.itemID),
+				g.have >= g.qty and "40ff40" or "ff6060", g.have, partsOf(g.itemID), money(g.each), money(g.each * g.qty),
 				makers[g.itemID] and ("    |cffffd100made by " .. makers[g.itemID] .. "|r") or "")
 		end
 		L[#L + 1] = ("Materials %s%s    Auction price %s    Your price %s    Margin %s    Sold through WoW CRM: %d"):format(money(current.mats),

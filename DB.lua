@@ -51,6 +51,7 @@ function DB.Init(saved, realm)
 	for k, v in pairs(DEFAULTS) do
 		if saved.settings[k] == nil then saved.settings[k] = v end
 	end
+	if type(saved.settings.invSources) ~= "table" then saved.settings.invSources = { bags = true } end
 	if saved.settings.minGap < DB.MIN_GAP_FLOOR then saved.settings.minGap = DB.MIN_GAP_FLOOR end
 
 	saved.realms = saved.realms or {}

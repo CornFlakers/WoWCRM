@@ -1,6 +1,6 @@
 -- Tests for the files that hold no game API: Util, DB, Model.
 local ns = {}
-for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua", "Catalog.lua" }) do
+for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua", "Catalog.lua", "Inventory.lua" }) do
 	assert(loadfile(f))("WoWCRM", ns)
 end
 local U, DB, M = ns.Util, ns.DB, ns.Model
@@ -447,6 +447,56 @@ eq(qtext, "Big Bag (14 slot) 3s, Silk Bag (10 slot) 25s", "price list, biggest f
 eq(qn, 2, "both items quoted")
 qtext, qn = Cat.QuoteList(priced, 30)
 eq(qn, 1, "price list stops before it would be too long for chat")
+
+-- inventory across bags, bank, other characters and guild banks
+local Inv = ns.Inventory
+local pid, pn = Inv.ParseItem("4306;20")
+eq(pid, 4306, "item id from a stored stack")
+eq(pn, 20, "stack size from a stored stack")
+pid, pn = Inv.ParseItem("16084::::::::25:1491::14:::::::")
+eq(pid, 16084, "item id from a stored item with details")
+eq(pn, 1, "a single item counts as one")
+eq(Inv.ParseItem("WARRIOR"), nil, "other stored text is not an item")
+local held = Inv.Collect({
+	guid = "Me", name = "Me Name",
+	mastercraft = {
+		Me = { bags = { [1] = 99 }, bank = { [1] = 8 } },
+		Alt1 = { bags = { [1] = 5 }, bank = { [1] = 10, [2] = 3 } },
+		Alt2 = { bags = { [1] = 1 } },
+	},
+	brother = { forever = {
+		["Me Name"] = { { items = { "1;50" } } },
+		["Guild One*"] = { { items = { "1;25", "2" } }, { name = "Tab 2", items = { "1;5" } } },
+	} },
+})
+eq(held.myBank[1], 8, "own bank from the recorded snapshot")
+eq(held.altBags[1], 6, "other characters' bags added together")
+eq(held.altBank[1], 10, "other characters' banks")
+eq(held.guild[1], 30, "guild bank tabs added together")
+eq(held.guild[2], 1, "single guild bank item")
+eq(held.found.alts, true, "other characters found")
+eq(held.found.guild, true, "guild bank found")
+local function bagsFn(id) return id == 1 and 4 or 0 end
+local function bankFn(id) return id == 1 and 6 or 0 end
+local cnt, parts = Inv.Counter(held, { bags = true }, bagsFn, bankFn)
+eq(cnt(1), 4, "bags only")
+cnt, parts = Inv.Counter(held, { bags = true, bank = true }, bagsFn, bankFn)
+eq(cnt(1), 12, "bags plus bank, using the larger of the two bank figures")
+eq(parts(1), "bags 4, bank 8", "breakdown by place")
+cnt, parts = Inv.Counter(held, { bags = true, bank = true, altBags = true, altBank = true, guild = true }, bagsFn, bankFn)
+eq(cnt(1), 58, "everything ticked")
+eq(cnt(2), 4, "an item held only by an alt and the guild")
+eq(parts(3), "none", "nothing anywhere")
+cnt = Inv.Counter(held, { guild = true }, bagsFn, bankFn)
+eq(cnt(1), 30, "guild bank alone")
+held = Inv.Collect({ name = "Me Name", brother = { forever = {
+	["Me Name"] = { { items = { "1;50" } } },
+	["Other Char"] = { { items = { "1;7" } }, { bankType = 0, items = { "1;9" } } },
+} } })
+eq(held.altBags[1], 7, "without Mastercraft, other characters' bags come from Bagnon")
+eq(held.altBank[1], 9, "and their banks too")
+eq(held.guild[1], nil, "no guild bank stored")
+eq(DB.Init({}, "Inv").settings.invSources.bags, true, "bags counted by default")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

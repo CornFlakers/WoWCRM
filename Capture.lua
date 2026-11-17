@@ -121,6 +121,13 @@ ns.On("MAIL_SEND_SUCCESS", function()
 	local c = M.FindContact(p.key)
 	local key = c and c.key or p.key
 	if M.LogMail(key, p.subject, U.Now()) then ns.Changed(true) end
+	local filled = ns.Mail.filled
+	ns.Mail.filled = nil
+	if filled and filled.key == key and M.RecordOutreach(key, filled.template, U.Now()) then
+		local c = M.GetContact(key)
+		ns.Print(("follow-up to %s recorded (%d sent in total)."):format(U.Display(key, DB.realm), c.outreach))
+		ns.Changed()
+	end
 	if p.cod <= 0 or not allowed(key) then return end
 	local text = ("WoW CRM\n\nRecord this cash-on-delivery mail as an order for |cffffff00%s|r?\n\n%s\n%s due"):format(
 		U.Display(key, DB.realm), #p.items > 0 and M.Summary(p.items, 90) or "(no items attached)", U.FormatMoney(p.cod))

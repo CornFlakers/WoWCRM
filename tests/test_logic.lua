@@ -48,7 +48,7 @@ eq(#U.SplitTabs("a\t\tc"), 3, "empty fields kept")
 -- posts
 fresh()
 eq(DB.settings.minGap, 60, "default gap")
-eq(#DB.R.mailTemplates, 2, "seeded templates")
+eq(#DB.R.mailTemplates, 5, "seeded templates, including three follow-ups")
 local _, err = M.SavePost(nil, "", "x", { SAY = true })
 eq(err ~= nil, true, "name required")
 _, err = M.SavePost(nil, "Long", ("a"):rep(256), { SAY = true })
@@ -282,6 +282,48 @@ eq(v1.version, 2, "saved data upgraded")
 eq(DB.R.orders[1].items[1].name, "3x Mana Oil", "old order keeps what was sold")
 eq(M.LTV("A-R1"), 50000, "old order keeps its value")
 eq(M.OrderTitle(DB.R.orders[1]), "3x Mana Oil", "old order still has a title")
+
+-- follow-up outreach: who is next, how often, and when
+fresh()
+local DAY = 86400
+M.EnsureContact("Lead1-Stormrage", T)
+M.EnsureContact("Lead2-Stormrage", T)
+M.EnsureContact("Cust-Stormrage", T).status = "customer"
+M.EnsureContact("Quiet-Stormrage", T).status = "do not contact"
+M.EnsureContact("Spam-Stormrage", T).status = "ignored"
+eq(#M.FollowUps("leads", T), 2, "leads listed")
+eq(#M.FollowUps("customers", T), 1, "customers listed")
+eq(#M.FollowUps("everyone", T), 3, "do-not-contact and ignored people are never listed")
+eq(M.RecordOutreach("Lead1-Stormrage", "Follow-up: still available", T + DAY), true, "outreach recorded")
+local l1 = M.GetContact("Lead1-Stormrage")
+eq(l1.outreach, 1, "outreach counted")
+eq(l1.lastOutreach, T + DAY, "last outreach time kept")
+eq(l1.lastTemplate, "Follow-up: still available", "template remembered")
+local f = M.FollowUps("leads", T + DAY)
+eq(f[1].key, "Lead2-Stormrage", "never-contacted lead comes first")
+eq(f[2].recent, true, "just-contacted lead is flagged recent")
+M.RecordOutreach("Lead2-Stormrage", "x", T + 2 * DAY)
+M.RecordOutreach("Lead1-Stormrage", "x", T + 2 * DAY)
+eq(l1.outreach, 2, "second outreach counted")
+f = M.FollowUps("leads", T + 10 * DAY)
+eq(f[1].recent, false, "after the gap they are due again")
+eq(M.Ago(nil, T), "never", "never contacted")
+eq(M.Ago(T, T + 100), "today", "contacted today")
+eq(M.Ago(T, T + 3 * DAY + 5), "3 days ago", "days since outreach")
+eq(M.RecordOutreach("Nobody-Stormrage", "x", T), false, "unknown contact not counted")
+dump = M.Export()
+DB.Init({}, "Other4")
+M.Import(dump, T)
+eq(M.GetContact("Lead1-Stormrage").outreach, 2, "outreach count survives export and import")
+
+-- data from before follow-up templates existed gains them once, without duplicates
+local older = DB.Init({}, "Old")
+older.realms.Old.seededFollowUps = nil
+older.realms.Old.mailTemplates = { older.realms.Old.mailTemplates[1] }
+DB.Init(older, "Old")
+eq(#DB.R.mailTemplates, 4, "follow-up templates added to existing data")
+DB.Init(older, "Old")
+eq(#DB.R.mailTemplates, 4, "and only once")
 
 -- settings floor and data surviving a reload
 local saved = DB.Init({ settings = { minGap = 1 } }, "R")

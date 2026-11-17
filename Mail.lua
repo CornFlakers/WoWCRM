@@ -6,7 +6,7 @@ ns.Mail = Mail
 
 Mail.open = false
 ns.On("MAIL_SHOW", function() Mail.open = true; ns.Notify() end)
-ns.On("MAIL_CLOSED", function() Mail.open = false; ns.Notify() end)
+ns.On("MAIL_CLOSED", function() Mail.open = false; Mail.filled = nil; ns.Notify() end)
 
 local function bodyBox()
 	if SendMailBodyEditBox then return SendMailBodyEditBox end
@@ -45,5 +45,7 @@ function Mail.Compose(key, templateId)
 	SendMailSubjectEditBox:SetText(U.Fill(t.subject, vars):sub(1, 64))
 	local body = bodyBox()
 	if body then body:SetText(U.Fill(t.body, vars):sub(1, 500)) end
+	-- When this letter is actually sent, it is counted as outreach to this contact.
+	Mail.filled = { key = key, template = t.name }
 	return true
 end

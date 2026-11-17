@@ -518,6 +518,53 @@ function M.LogMail(key, subject, now)
 	return true
 end
 
+-- ---------------------------------------------------------------- follow-up outreach
+
+ns.FOLLOW_FILTERS = { "leads", "customers", "everyone" }
+
+-- A follow-up letter was sent to this contact.
+function M.RecordOutreach(key, templateName, now)
+	local c = M.GetContact(key)
+	if not c then return false end
+	c.outreach = (c.outreach or 0) + 1
+	c.lastOutreach = now
+	c.lastTemplate = templateName
+	c.lastContact = now
+	return true
+end
+
+-- Who to write to next. People never written to come first, then the longest-waiting.
+-- Anyone written to within the outreach gap is kept at the bottom and flagged recent.
+-- "do not contact" and "ignored" contacts are never listed.
+function M.FollowUps(filter, now)
+	local gap = (DB.settings.outreachGap or 3) * 86400
+	local out = {}
+	for k, c in pairs(R().contacts) do
+		local isLead = c.status == "lead"
+		local isCustomer = c.status == "customer" or c.status == "repeat" or c.status == "vip"
+		local wanted = (filter == "leads" and isLead) or (filter == "customers" and isCustomer)
+			or (filter == "everyone" and (isLead or isCustomer))
+		if wanted then
+			out[#out + 1] = { key = k, contact = c, count = c.outreach or 0, last = c.lastOutreach,
+				recent = c.lastOutreach ~= nil and now - c.lastOutreach < gap }
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.recent ~= b.recent then return not a.recent end
+		if (a.last or 0) ~= (b.last or 0) then return (a.last or 0) < (b.last or 0) end
+		return a.key < b.key
+	end)
+	return out
+end
+
+-- "never", "today", "3 days ago"
+function M.Ago(t, now)
+	if not t then return "never" end
+	local days = math.floor((now - t) / 86400)
+	if days <= 0 then return "today" end
+	return days .. (days == 1 and " day ago" or " days ago")
+end
+
 -- ---------------------------------------------------------------- export / import
 
 local HEADER, OLD_HEADER = "WOWCRM2", "WOWCRM1"
@@ -540,7 +587,7 @@ function M.Export()
 	for _, k in ipairs(keys) do
 		local c = r.contacts[k]
 		local src = c.sourcePost and M.GetPost(c.sourcePost)
-		line("C", k, c.status, c.tags, c.notes, c.firstSeen, c.lastContact, c.referredBy, src and src.name)
+		line("C", k, c.status, c.tags, c.notes, c.firstSeen, c.lastContact, c.referredBy, src and src.name, c.outreach, c.lastOutreach)
 	end
 	for _, o in ipairs(r.orders) do
 		line("O", o.contact, o.type, o.desc, o.price, o.status, o.created, o.paidAt, o.notes)
@@ -598,6 +645,8 @@ function M.Import(text, now)
 			referrers[f[2]] = blank(f[8])
 			local src = postByName[f[9] or ""]
 			if src then c.sourcePost = src.id end
+			if tonumber(f[10]) then c.outreach = tonumber(f[10]) end
+			if tonumber(f[11]) then c.lastOutreach = tonumber(f[11]) end
 		elseif kind == "O" and f[2] and f[2] ~= "" then
 			if old then
 				pending = {

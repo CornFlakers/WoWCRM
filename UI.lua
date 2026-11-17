@@ -511,8 +511,8 @@ AddTab("Contacts", function(p, tab)
 		local ltv, paid, all, ltvGold, ltvGoods = M.LTV(c.key)
 		local n, rev = M.Referrals(c.key)
 		local src = c.sourcePost and M.GetPost(c.sourcePost)
-		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s"):format(
-			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-"))
+		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s     Follow-ups sent: %d, last %s"):format(
+			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-", c.outreach or 0, M.Ago(c.lastOutreach, U.Now())))
 	end
 end)
 
@@ -728,7 +728,12 @@ end)
 
 AddTab("Mail", function(p, tab)
 	local sel
-	local list = At(List(p, 220, 372, function(item) tab.SelectTemplate(item.id) end), p, 0, 0)
+	At(Label(p, "Templates"), p, 2, -2)
+	local list = At(List(p, 220, 150, function(item) tab.SelectTemplate(item.id) end), p, 0, -18)
+	At(Label(p, "Who to write to"), p, 2, -178)
+	local filter = At(Cycle(p, ns.FOLLOW_FILTERS, 110), p, 108, -173)
+	local follow = At(List(p, 220, 268, function(item) tab.Select(item.key) end), p, 0, -198)
+	local toKey
 	local X = 234
 	At(Label(p, "Template"), p, X, -4)
 	local name = At(Edit(p, 240), p, X + 80, 0)
@@ -769,15 +774,33 @@ AddTab("Mail", function(p, tab)
 		UI.Msg(ok and "Letter filled in. Check it, attach anything you need, then press Send in the mail window." or err, not ok)
 	end), p, X + 290, -291)
 	local hint = At(Label(p, "", "GameFontHighlightSmall", 520), p, X, -320)
+	local history = At(Label(p, "", "GameFontHighlight", 520), p, X, -346)
+	At(Label(p, "Pick a person on the left and a template, press Fill in letter, read it over, then press Send in the\nmail window. Sending is what counts it. People you wrote to recently drop to the bottom of the list.", "GameFontDisableSmall", 520), p, X, -400)
+	filter:HookScript("OnClick", function() tab.Refresh() end)
+	to:SetScript("OnTextChanged", function() if tab.Refresh and p:IsShown() then tab.Refresh() end end)
 
 	function tab.SelectTemplate(id) load(M.GetTemplate(id)); tab.Refresh() end
 	-- Select a contact key to address the letter to.
-	function tab.Select(key) SetEdit(to, Name(key)); tab.Refresh() end
+	function tab.Select(key) toKey = key; SetEdit(to, Name(key)); tab.Refresh() end
 	function tab.Refresh()
 		if sel and not M.GetTemplate(sel) then load(nil) end
 		if not sel and not tab.started and DB.R.mailTemplates[1] then load(DB.R.mailTemplates[1]) end
 		tab.started = true
 		list:Set(DB.R.mailTemplates, function(t) return t.name end, sel)
+		local now = U.Now()
+		local typed = M.FindContact(to:GetText())
+		toKey = typed and typed.key or nil
+		follow:Set(M.FollowUps(filter.value, now), function(f)
+			local label = f.count == 0 and "never" or (f.count .. "x, " .. M.Ago(f.last, now))
+			return (f.recent and "|cff888888" or "") .. Name(f.key), label
+		end, toKey)
+		if typed then
+			history:SetText(("%s  (%s)\nFollow-ups sent: |cffffd100%d|r    Last: %s%s"):format(
+				Name(typed.key), typed.status, typed.outreach or 0, M.Ago(typed.lastOutreach, now),
+				typed.lastTemplate and ("  with \"" .. typed.lastTemplate .. "\"") or ""))
+		else
+			history:SetText("")
+		end
 		if Mail.open then
 			fill:Enable()
 			hint:SetText("Mailbox open. The add-on fills in the letter; you press Send.")
@@ -801,6 +824,8 @@ AddTab("Dashboard", function(p, tab)
 	At(Label(p, "Channel names:  General", "GameFontHighlightSmall"), p, X, -76)
 	At(Label(p, "A follow-up trade joins the same order for this many minutes", "GameFontHighlightSmall"), p, X, -416)
 	local win = At(Edit(p, 50), p, X + 330, -412)
+	At(Label(p, "Days before someone you wrote to returns to the top of the list", "GameFontHighlightSmall"), p, X, -440)
+	local gapDays = At(Edit(p, 50), p, X + 330, -436)
 	local gen = At(Edit(p, 80), p, X + 140, -72)
 	At(Label(p, "Trade", "GameFontHighlightSmall"), p, X + 232, -76)
 	local trd = At(Edit(p, 80), p, X + 270, -72)
@@ -814,6 +839,7 @@ AddTab("Dashboard", function(p, tab)
 		if U.Trim(trd:GetText()) ~= "" then s.tradeName = U.Trim(trd:GetText()) end
 		s.saveReminder = remind:GetChecked() and true or false
 		s.orderWindow = math.max(1, math.floor(tonumber(win:GetText()) or s.orderWindow))
+		s.outreachGap = math.max(0, math.floor(tonumber(gapDays:GetText()) or s.outreachGap))
 		s.promptStrangers = strangers:GetChecked() and true or false
 		UI.Msg("Settings applied.")
 		tab.loaded = false
@@ -856,6 +882,7 @@ AddTab("Dashboard", function(p, tab)
 			SetEdit(gen, s.generalName)
 			SetEdit(trd, s.tradeName)
 			SetEdit(win, tostring(s.orderWindow))
+			SetEdit(gapDays, tostring(s.outreachGap))
 			remind:SetChecked(s.saveReminder)
 			strangers:SetChecked(s.promptStrangers)
 		end

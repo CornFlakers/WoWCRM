@@ -10,6 +10,7 @@ local DEFAULTS = {
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
 	saveReminder = true,  -- show the "Save changes" button
 	promptStrangers = true, -- offer to record a sale to someone who is not yet a contact
+	outreachGap = 3,      -- days before someone you already wrote to comes back to the top of the follow-up list
 	orderWindow = 60,     -- minutes during which a follow-up trade is offered as part of the same order
 	generalName = "General",
 	tradeName = "Trade",
@@ -71,6 +72,21 @@ function DB.Init(saved, realm)
 			body = "Hi {name},\n\nThanks for buying from me. Whisper me any time you need more.\n\n{me}",
 		}
 		R.nextId = R.nextId + 2
+	end
+
+	-- Follow-up letters, written to remind and invite rather than to chase.
+	if not R.seededFollowUps then
+		R.seededFollowUps = true
+		local function add(name, subject, body)
+			R.mailTemplates[#R.mailTemplates + 1] = { id = R.nextId, name = name, subject = subject, body = body }
+			R.nextId = R.nextId + 1
+		end
+		add("Follow-up: still available", "Still crafting if you need anything",
+			"Hi {name},\n\nYou asked me about some crafting a little while ago. No rush at all - I just wanted you to know I'm still around and happy to make whatever you need. Bring your own materials or I can supply them.\n\nWhisper me whenever you see me on, or reply to this letter.\n\n{me}")
+		add("Follow-up: taking orders", "Taking orders this week",
+			"Hi {name},\n\nI have time for a few more crafting orders this week. If there is something you have been meaning to get made, reply to this letter with what you need and I will have it ready for you.\n\n{me}")
+		add("Follow-up: past customer", "Thanks again",
+			"Hi {name},\n\nThanks again for the {item} order. If you or a friend need anything else made, I'm always glad to help - just whisper me or reply here.\n\n{me}")
 	end
 
 	DB.db, DB.R, DB.realm, DB.settings = saved, R, realm, saved.settings

@@ -89,7 +89,8 @@ local tells = {}
 function ChatFrame_SendTell(name) tells[#tells + 1] = name end
 function MailFrameTab_OnClick() end
 function SendMail() end
-function GetSendMailCOD() return 70000 end
+codAmount = 70000
+function GetSendMailCOD() return codAmount end
 function GetSendMailItem(i) if i == 1 then return "Runed Rod", 1, nil, 2 end end
 function GetSendMailItemLink(i) if i == 1 then return "|cffffffff|Hitem:1::::::::|h[Runed Rod]|h|r" end end
 LE_GAME_ERR_TRADE_COMPLETE = 77
@@ -111,7 +112,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
 assert(#files == 9, "TOC should list 9 files, found " .. #files)
-local globalsBefore = {}
+local globalsBefore = { codAmount = true }
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
 local U, DB, M, UI = ns.Util, ns.DB, ns.Model, ns.UI
@@ -335,10 +336,28 @@ before = #DB.R.orders
 SendMail("Ann", "Your order is ready", "body")
 fire("MAIL_SEND_SUCCESS")
 eq(#DB.R.mailLog, 1, "sent mail logged against the contact")
+eq(M.GetContact("Ann-Stormrage").outreach, 1, "sending the filled-in letter counts as one follow-up")
 eq(#DB.R.orders, before + 1, "cash-on-delivery mail recorded after confirming")
 eq(DB.R.orders[#DB.R.orders].status, "delivered", "COD is delivered, not yet paid")
 eq(DB.R.orders[#DB.R.orders].items[1].qty, 2, "COD attachments become item lines")
 eq(DB.R.orders[#DB.R.orders].contact, "Ann-Stormrage", "COD order on the right contact")
+codAmount = 0
+SendMail("Ann", "something else", "body")
+fire("MAIL_SEND_SUCCESS")
+eq(M.GetContact("Ann-Stormrage").outreach, 1, "a letter the add-on did not fill in is not counted")
+-- pick the next person from the follow-up list
+local picked
+for _, w in ipairs(widgets) do
+	if type(w.item) == "table" and w.item.key == "Carl-Stormrage" and w.item.count and inside(w, mail) and w._shown then picked = w end
+end
+eq(picked ~= nil, true, "leads appear in the follow-up list")
+picked._scripts.OnClick(picked)
+click("Fill in letter", mail)
+eq(SendMailNameEditBox._text, "Carl", "clicking a lead addresses the letter to them")
+SendMail("Carl", "s", "b")
+fire("MAIL_SEND_SUCCESS")
+eq(M.GetContact("Carl-Stormrage").outreach, 1, "follow-up to the lead counted")
+eq(M.GetContact("Carl-Stormrage").lastTemplate, "Order ready", "template used is remembered")
 fire("MAIL_CLOSED")
 
 -- dashboard, bar, probe

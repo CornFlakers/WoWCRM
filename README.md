@@ -50,6 +50,17 @@ Values come from TradeSkillMaster or Auctionator if you have either, otherwise t
 
 Lifetime value and the dashboard show gold and goods separately, and the dashboard lists what each post sold. Open a contact to see all their orders; click one to open it.
 
+## Follow-up letters
+
+For people who whispered once and went quiet, or customers you'd like to see again. The aim is a friendly reminder with an easy way to reply, not a chase.
+
+1. Open a mailbox, then `/crm` and the **Mail** tab.
+2. Under **Who to write to**, choose leads, customers or everyone, and click a name. People you have never written to are at the top; anyone written to in the last 3 days (adjustable) is greyed out at the bottom.
+3. Click a template, then **Fill in letter**. The recipient, subject and body are filled in.
+4. Read it, change anything you like, and press **Send** in the mail window.
+
+When the game confirms the letter was sent, it is counted. The Mail tab and the contact page show how many follow-ups each person has had and when the last one was. Contacts marked "do not contact" or "ignored" never appear in the list. Three follow-up templates are included; edit them or write your own.
+
 ## Things to know
 
 - **Chat messages are limited to 255 bytes, not 255 letters.** Accented letters count as 2 and an item link counts as its full hidden text. The editor shows the count as you type.

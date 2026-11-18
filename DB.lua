@@ -9,6 +9,7 @@ local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
 	heldFree = true,      -- materials already held count as costing nothing
+	barChannel = "TRADE", -- the channel picked on the quick-post bar
 	publicSpacing = 2,    -- minutes between any two posts to Say, Yell, General or Trade (0 = off)
 	quoteSmaller = true,  -- offer the next smaller, cheaper bag in a quote
 	quoteText = "Hi {name}! {item} is {price} with my mats.",

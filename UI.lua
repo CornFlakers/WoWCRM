@@ -1708,7 +1708,7 @@ end
 -- ---------------------------------------------------------------- quick-post bar
 
 local BAR_MAX = 10
-local BAR_TOP = 124 -- where the single-post buttons start
+local BAR_TOP = 168 -- where the post buttons start
 
 local function refreshBar()
 	if not bar or not bar:IsShown() then return end
@@ -1731,16 +1731,29 @@ local function refreshBar()
 		bar.cycleInfo:SetText(why or "Pausing so the channels are not flooded.")
 	end
 
-	-- One button per post.
+	-- Pick a channel, then a post: the post goes to exactly that channel.
+	local ch = DB.settings.barChannel
+	for t, b in pairs(bar.chanButtons) do
+		if t == ch then b:LockHighlight() else b:UnlockHighlight() end
+	end
+	local okHere, whyNot = Chat.Available(ch)
+	local gap = okHere and M.GapRemaining(ch, now) or 0
+	local ready = okHere and gap == 0
+	if not okHere then
+		bar.chanInfo:SetText("|cffff9060" .. ns.TARGET_LABEL[ch] .. ": " .. (whyNot or "not available here") .. "|r")
+	elseif gap > 0 then
+		bar.chanInfo:SetText(ns.TARGET_LABEL[ch] .. ": next post in " .. M.Clock(gap))
+	else
+		bar.chanInfo:SetText("|cff40ff40" .. ns.TARGET_LABEL[ch] .. ": ready.|r Click a post to send it there.")
+	end
 	local shown = math.min(#posts, BAR_MAX)
 	for i = 1, BAR_MAX do
 		local b = bar.buttons[i]
 		local p = posts[i]
 		if p then
 			b.post = p.id
-			local t, whyNot = M.NextTarget(p, Chat.Available, now)
-			b:SetText(U.Shorten(p.name, 18) .. " > " .. (t and ns.TARGET_LABEL[t] or U.Shorten(whyNot or "-", 18)))
-			if t then b:Enable() else b:Disable() end
+			b:SetText(U.Shorten(p.name, 30))
+			if ready then b:Enable() else b:Disable() end
 			b:Show()
 		else
 			b:Hide()
@@ -1785,7 +1798,17 @@ local function buildBar()
 		end)
 		bar.chanChecks[t] = cb
 	end
-	At(Label(bar, "Or send one post now:", "GameFontDisableSmall"), bar, 10, -104)
+	At(Label(bar, "Or pick a channel, then the post to send there:", "GameFontDisableSmall", 260), bar, 10, -104)
+	bar.chanButtons = {}
+	local short = { SAY = "Say", YELL = "Yell", GENERAL = "Gen", TRADE = "Trade", PARTY = "Party", GUILD = "Guild" }
+	for i, t in ipairs(ns.TARGETS) do
+		local b = At(Button(bar, short[t], 42, function()
+			DB.settings.barChannel = t
+			refreshBar()
+		end), bar, 10 + (i - 1) * 43, -120)
+		bar.chanButtons[t] = b
+	end
+	bar.chanInfo = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -148)
 
 	bar.empty = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -BAR_TOP)
 	bar.buttons = {}
@@ -1794,7 +1817,7 @@ local function buildBar()
 		b:SetScript("OnClick", function(self)
 			local post = self.post and M.GetPost(self.post)
 			if not post then return end
-			local ok, res = Chat.SendNext(post)
+			local ok, res = Chat.Send(post, DB.settings.barChannel)
 			if not ok then ns.Print(res) end
 			refreshBar()
 		end)

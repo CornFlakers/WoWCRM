@@ -631,14 +631,28 @@ eq(flagged, true, "material made by another profession is flagged")
 SlashCmdList.WOWCRM("bar")
 eq(DB.settings.barShown, true, "quick-post bar shown")
 clock = clock + 120
-local n = #sent
-local barButton
+local barRoot
 for _, w in ipairs(widgets) do
-	if w._text:find("^Enchants > ") and w._scripts.OnClick then barButton = w end
+	if w._kind == "FontString" and w._text:find("^WoW CRM posts for Seller") then barRoot = w._parent end
 end
+eq(barRoot ~= nil, true, "the bar says which character it posts as")
+eq(DB.settings.barChannel, "TRADE", "Trade is picked to start with")
+local n = #sent
+local barButton = find("Enchants", barRoot)
 eq(barButton ~= nil, true, "bar has a button for the post")
 barButton._scripts.OnClick(barButton)
 eq(#sent, n + 1, "bar click sends one message")
+eq(sent[#sent].channel, 3, "to the picked channel: Trade")
+click("Guild", barRoot)
+eq(DB.settings.barChannel, "GUILD", "another channel picked")
+barButton._scripts.OnClick(barButton)
+eq(sent[#sent].type, "GUILD", "the same post goes to Guild, though it is not ticked for Guild")
+click("Party", barRoot)
+eq(barButton._enabled, false, "not in a party: the post buttons wait")
+click("Say", barRoot)
+barButton._scripts.OnClick(barButton)
+eq(sent[#sent].type, "SAY", "and to Say")
+eq(#sent, n + 3, "one message per click, nothing else")
 
 -- the bar's one button: next post, next channel, strict pause between posts
 DB.settings.publicSpacing = 2

@@ -36,6 +36,7 @@ A typical session:
 
 - **One pause for every public channel.** After any post to Say, Yell, General or Trade, all of them wait 2 minutes (Options tab; 0 turns it off). One advert can no longer land in Yell, General and Trade within seconds.
 - **The quick-post bar's big button** (`/crm bar`, or right-click the minimap button) takes turns: next post, next channel. General, then Trade, then General again. Outside a city, where there is no Trade, it uses General. Tick Yell on the bar to include it. While it waits, the button counts down.
+- **Or choose exactly where:** pick a channel on the bar (Say, Yell, Gen, Trade, Party, Guild), then click a post. It goes to that channel only, whatever the post is ticked for. The bar shows when the picked channel is ready.
 - **Whispers are not held back.** Whispering a post to someone is private and has no pause.
 
 ## Posting from more than one character

@@ -3,4 +3,5 @@ package-as: WoWCRM
 ignore:
   - tests
   - SPEC.md
+  - .github
   - .gitignore

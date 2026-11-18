@@ -1,0 +1,24 @@
+# Builds the add-on zip and publishes it when a version tag such as v0.5.0 is pushed:
+# to GitHub Releases always, and to CurseForge once the TOC has an X-Curse-Project-ID
+# and the repository has a CF_API_KEY secret.
+name: Package and release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: BigWigsMods/packager@v2

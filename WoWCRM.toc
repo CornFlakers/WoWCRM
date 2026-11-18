@@ -2,7 +2,7 @@
 ## Title: WoW CRM
 ## Notes: Run selling campaigns: one-click posts, whisper leads, customers, orders, follow-up mail and results per post.
 ## OptionalDeps: Mastercraft, Auctionator, TradeSkillMaster, BagBrother
-## Version: 0.4.0
+## Version: @project-version@
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 ## SavedVariables: WoWCRMDB
 ## AddonCompartmentFunc: WoWCRM_OnCompartmentClick

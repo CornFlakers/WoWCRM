@@ -1009,6 +1009,35 @@ do
 	GetItemInfo, GetMerchantNumItems, GetMerchantItemLink, GetMerchantItemInfo, UnitExists, UnitLevel = nil, nil, nil, nil, nil, nil
 end
 
+-- the Leads tab sorts leads by what the post was for
+do
+	clock = math.floor(clock) + 1
+	local post = M.SavePost(nil, "LFG tank", "Tank LFG, whisper me", { SAY = true }, M.me, "group")
+	M.RecordSend(post, "SAY", U.Now(), "Barrens")
+	fire("CHAT_MSG_WHISPER", "need a tank for SFK?", "Groupy")
+	UI.Show("Leads")
+	local leadsPanel = UI.tabs.Leads.panel
+	local function btn(prefix)
+		for _, w in ipairs(widgets) do
+			if w._scripts.OnClick and w._text:sub(1, #prefix) == prefix and inside(w, leadsPanel) then return w end
+		end
+	end
+	eq(btn("Group (") ~= nil, true, "a filter button per purpose, with a count")
+	btn("Group (")._scripts.OnClick(btn("Group ("))
+	local shown = {}
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.contact and w._shown and inside(w, leadsPanel) then shown[#shown + 1] = w.item end
+	end
+	eq(#shown, 1, "only the group lead is listed")
+	eq(shown[1].contact, "Groupy-Stormrage", "the player who answered the group post")
+	btn("All (")._scripts.OnClick(btn("All ("))
+	local all = 0
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.contact and w._shown and inside(w, leadsPanel) then all = all + 1 end
+	end
+	eq(all > 1, true, "All lists every open lead again")
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,

@@ -149,7 +149,7 @@ local function List(parent, w, h, onSelect)
 end
 
 local function When(t)
-	return t and date("%b %d %H:%M", t) or "-"
+	return t and date("%b %d %H:%M", math.floor(t)) or "-"
 end
 
 local function Name(key)
@@ -234,6 +234,26 @@ AddTab("Posts", function(p, tab)
 		ns.Changed()
 		tab.Select(post.id)
 	end), p, 0, -372)
+	-- What the post is for: selling, looking for something, or a group. Leads keep it.
+	local kindSel = "sell"
+	local kindBtn = At(Button(p, "", 210), p, X + 280, -26)
+	local function showKind()
+		kindBtn:SetText("For: |cff" .. ns.KIND_COLOR[kindSel] .. ns.KIND_LABEL[kindSel] .. "|r")
+	end
+	kindBtn:SetScript("OnClick", function()
+		local i = U.Contains(ns.POST_KINDS, kindSel) or 0
+		kindSel = ns.POST_KINDS[i % #ns.POST_KINDS + 1]
+		showKind()
+		UI.Msg(ns.KIND_LABEL[kindSel] .. ": " .. ns.KIND_HINT[kindSel] .. ". Press Save post to keep it.")
+	end)
+	kindBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("What this post is for")
+		for _, k in ipairs(ns.POST_KINDS) do GameTooltip:AddLine(ns.KIND_LABEL[k] .. ": " .. ns.KIND_HINT[k], 1, 1, 1) end
+		GameTooltip:AddLine("Whoever answers is listed under it on the Leads tab, and tagged with it in Contacts.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	kindBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	At(Label(p, "Message"), p, X, -30)
 	local counter = At(Label(p, "", "GameFontHighlightSmall"), p, X + 70, -31)
 	local text = At(MultiEdit(p, 500, 84), p, X, -48)
@@ -265,6 +285,8 @@ AddTab("Posts", function(p, tab)
 		sel = post and post.id or nil
 		ownerSel = post and post.owner or (not post and M.me) or nil
 		ownerBtn:SetText("Posted by: " .. U.Shorten(ownerText(ownerSel), 20))
+		kindSel = post and M.PostKind(post) or "sell"
+		showKind()
 		SetEdit(name, post and post.name)
 		text.edit:SetText(post and post.text or "")
 		for _, t in ipairs(ns.TARGETS) do checks[t]:SetChecked(post and post.targets[t] and true or false) end
@@ -274,7 +296,7 @@ AddTab("Posts", function(p, tab)
 	At(Button(p, "Save post", 100, function()
 		local targets = {}
 		for _, t in ipairs(ns.TARGETS) do targets[t] = checks[t]:GetChecked() and true or false end
-		local post, err = M.SavePost(sel, name:GetText(), text.edit:GetText(), targets, ownerSel)
+		local post, err = M.SavePost(sel, name:GetText(), text.edit:GetText(), targets, ownerSel, kindSel)
 		if not post then UI.Msg(err, true) return end
 		sel = post.id
 		UI.Msg("Post saved.")
@@ -401,7 +423,8 @@ AddTab("Posts", function(p, tab)
 			elseif post.owner == M.ANY then who = "any"
 			elseif post.owner == nil then who = "|cffff9060not given|r"
 			else who = "|cff888888" .. U.Shorten((U.SplitKey(post.owner)), 12) .. "|r" end
-			return (M.CanPost(post) and "" or "|cff888888") .. post.name, who
+			local k = M.PostKind(post)
+			return "|cff" .. ns.KIND_COLOR[k] .. U.Shorten(ns.KIND_LABEL[k], 6) .. "|r  " .. (M.CanPost(post) and "" or "|cff888888") .. post.name, who
 		end, sel)
 		local unassigned = M.UnassignedPosts()
 		if unassigned > 0 then
@@ -442,7 +465,18 @@ end
 
 AddTab("Leads", function(p, tab)
 	local sel, showClosed = nil, false
-	local list = At(List(p, 340, 346, function(item) sel = item.id; tab.HidePicker(); tab.Refresh() end), p, 0, 0)
+	-- Show every lead, or only those who answered one kind of post.
+	local kindFilter = "all"
+	local filterBtns = {}
+	local filters = { "all", "sell", "buy", "group" }
+	for i, k in ipairs(filters) do
+		filterBtns[k] = At(Button(p, k == "all" and "All" or ns.KIND_LABEL[k], 84, function()
+			kindFilter = k
+			sel = nil
+			tab.Refresh()
+		end), p, (i - 1) * 85, 0)
+	end
+	local list = At(List(p, 340, 320, function(item) sel = item.id; tab.HidePicker(); tab.Refresh() end), p, 0, -26)
 	local toggle = At(Button(p, "Show closed leads", 160), p, 0, -352)
 	local X = 354
 	local detail = At(Label(p, "", "GameFontHighlight", 410), p, X, -4)
@@ -582,16 +616,27 @@ AddTab("Leads", function(p, tab)
 	local shownFor, shownCount
 	function tab.Select(id) sel = id; picker:Hide(); tab.Refresh() end
 	function tab.Refresh()
-		local items = {}
+		local items, counts = {}, { all = 0, sell = 0, buy = 0, group = 0 }
 		for i = #DB.R.leads, 1, -1 do
 			local l = DB.R.leads[i]
-			if showClosed or l.status == "open" then items[#items + 1] = l end
+			if showClosed or l.status == "open" then
+				local k = M.LeadKind(l)
+				counts.all, counts[k] = counts.all + 1, counts[k] + 1
+				if kindFilter == "all" or kindFilter == k then items[#items + 1] = l end
+			end
 		end
+		for k, b in pairs(filterBtns) do
+			b:SetText((k == "all" and "All" or ns.KIND_LABEL[k]) .. " (" .. counts[k] .. ")")
+			if k == kindFilter then b:LockHighlight() else b:UnlockHighlight() end
+		end
+		if sel and kindFilter ~= "all" and M.LeadKind(lead()) ~= kindFilter then sel = nil end
 		table.sort(items, function(a, b) return a.time > b.time end)
 		list:Set(items, function(l)
 			local mark = l.status == "open" and "" or ("[" .. l.status .. "] ")
 			local n = (l.count or 1) > 1 and ("  |cff888888(" .. l.count .. ")|r") or ""
-			return mark .. Name(l.contact) .. ": " .. U.Shorten(l.text, 50) .. n, When(l.time)
+			local k = M.LeadKind(l)
+			local tag = kindFilter == "all" and ("|cff" .. ns.KIND_COLOR[k] .. U.Shorten(ns.KIND_LABEL[k], 5) .. "|r ") or ""
+			return tag .. mark .. Name(l.contact) .. ": " .. U.Shorten(l.text, 44) .. n, When(l.time)
 		end, sel)
 		local l = lead()
 		for _, b in ipairs(buttons) do if l then b:Enable() else b:Disable() end end
@@ -599,7 +644,8 @@ AddTab("Leads", function(p, tab)
 			local on, capturing = M.TrackingState(U.Now())
 			convo:Hide()
 			shownFor = nil
-			detail:SetText(#items > 0 and "Select a lead." or (on and capturing) and "Tracking is on. Whispers will appear here."
+			detail:SetText(#items > 0 and "Select a lead." or kindFilter ~= "all" and ("No " .. ns.KIND_LABEL[kindFilter] .. " leads yet. Set what a post is for on the Posts tab.")
+				or (on and capturing) and "Tracking is on. Whispers will appear here."
 				or on and "Tracking is on. Make a post and whispers will appear here."
 				or "No leads yet.\n\nPost from the quick-post bar or the Posts tab; tracking switches on by itself.\nAnyone who whispers you is captured here and added to your contacts.")
 			return
@@ -608,8 +654,10 @@ AddTab("Leads", function(p, tab)
 		local c = M.GetContact(l.contact)
 		local order = l.order and M.GetOrder(l.order)
 		local buy = M.PurchaseSummary(l.contact)
-		detail:SetText(("|cffffd100%s|r  (%s)   Lead: %s\nMessages: %d   Last: %s\n%s"):format(
-			Name(l.contact), c and c.status or "?", l.status, l.count or 1, When(l.time),
+		local k, src = M.LeadKind(l), M.LeadSource(l)
+		detail:SetText(("|cffffd100%s|r  (%s)   Lead: %s   |cff%s%s|r%s\nMessages: %d   Last: %s\n%s"):format(
+			Name(l.contact), c and c.status or "?", l.status, ns.KIND_COLOR[k], ns.KIND_LABEL[k],
+			src and ("  from \"" .. U.Shorten(src, 28) .. "\"") or "", l.count or 1, When(l.time),
 			order and ("Order: " .. M.OrderTitle(order, 40) .. " - " .. order.status)
 			or (buy.orders > 0 and ("Earlier orders: " .. buy.orders .. ", lifetime " .. U.FormatMoney(buy.value)) or "No orders yet.")))
 		local n = c and c.chat and #c.chat or 0

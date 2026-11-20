@@ -34,6 +34,16 @@ A typical session:
 3. Replies appear on the **Leads** tab with the conversation. Whisper back, then **Make it an order** when they buy.
 4. Trade with them. The trade fills in that order.
 
+## What a post is for
+
+Every post has a purpose, set with the **For:** button beside its name on the Posts tab:
+
+- **Selling**: goods and services you provide ("WTS bags, bring your cloth").
+- **Looking for**: things you want to buy or have made ("WTB Linen Cloth").
+- **Group**: dungeons, quests and groups ("Tank LFG for Wailing Caverns, whisper me").
+
+Whoever whispers you after a post is filed under its purpose. The **Leads** tab has a button for each (All, Selling, Looking for, Group) with a count. Each lead shows which post it answered, even if that post is deleted later. The contact is tagged with the purpose too (`sell`, `buy` or `group`), so searching `group` on the Contacts tab lists everyone you have grouped with. Posts saved before purposes existed count as Selling, and so do bag offers.
+
 ## Posting without spamming
 
 - **One pause for every public channel.** After any post to Say, Yell, General or Trade, all of them wait 2 minutes (Options tab; 0 turns it off). One advert can no longer land in Yell, General and Trade within seconds.

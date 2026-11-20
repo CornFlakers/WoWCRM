@@ -15,6 +15,16 @@ ns.CYCLE_CHANNELS = { "GENERAL", "TRADE", "YELL" }
 ns.CONTACT_STATUS = { "lead", "customer", "repeat", "vip", "do not contact", "ignored" }
 ns.ORDER_STATUS = { "quoted", "in progress", "delivered", "paid", "cancelled" }
 ns.ORDER_TYPE = { "crafted", "goods", "service" }
+-- What a post is for. Leads keep the purpose of the post they answered, so the Leads tab can
+-- show customers, people selling what you want, and group invitations apart.
+ns.POST_KINDS = { "sell", "buy", "group" }
+ns.KIND_LABEL = { sell = "Selling", buy = "Looking for", group = "Group" }
+ns.KIND_HINT = {
+	sell = "goods and services you provide",
+	buy = "things you want to buy or have made",
+	group = "dungeons, quests and groups",
+}
+ns.KIND_COLOR = { sell = "ffd100", buy = "80c0ff", group = "40ff40" }
 
 function U.Now()
 	local f = rawget(_G, "time") or os.time

@@ -78,7 +78,12 @@ function M.OwnerProblem(post)
 end
 
 -- owner: a character key or M.ANY. Left out, a new post belongs to the character writing it.
-function M.SavePost(id, name, text, targets, owner)
+-- What a post is for; posts saved before purposes existed are for selling.
+function M.PostKind(post)
+	return (post and ns.KIND_LABEL[post.kind]) and post.kind or "sell"
+end
+
+function M.SavePost(id, name, text, targets, owner, kind)
 	name, text = U.Trim(name), U.Trim(text)
 	if name == "" then return nil, "Give the post a name." end
 	if text == "" then return nil, "The message is empty." end
@@ -98,6 +103,8 @@ function M.SavePost(id, name, text, targets, owner)
 	end
 	post.name, post.text, post.targets = name, text, t
 	if owner ~= nil then post.owner = owner end
+	if kind ~= nil then post.kind = ns.KIND_LABEL[kind] and kind or "sell" end
+	post.kind = M.PostKind(post)
 	return post
 end
 
@@ -471,6 +478,28 @@ local function conversationLead(key, now)
 	if recent and now - recent.time <= M.LEAD_GAP_HOURS * 3600 then return recent end
 end
 
+-- Adds a word to a contact's tags unless it is already there.
+function M.AddTag(contact, word)
+	if not contact or not word or word == "" then return end
+	local tags = contact.tags or ""
+	for w in tags:gmatch("[^,%s]+") do if w:lower() == word:lower() then return end end
+	contact.tags = U.Trim(tags) == "" and word or (U.Trim(tags) .. ", " .. word)
+end
+
+-- What a lead answered: its purpose, and the post or offer by name.
+function M.LeadKind(lead)
+	if not lead then return "sell" end
+	if ns.KIND_LABEL[lead.kind] then return lead.kind end
+	local post = lead.post and M.GetPost(lead.post)
+	return post and M.PostKind(post) or "sell"
+end
+
+function M.LeadSource(lead)
+	if not lead then return nil end
+	local post = lead.post and M.GetPost(lead.post)
+	return (post and post.name) or lead.source or (lead.offer and (lead.offer .. " offer")) or nil
+end
+
 -- An incoming whisper. Returns lead, isNew (a new lead), isNewContact; or nil when it is not captured.
 -- Whispers from people already in your contacts are always kept in their conversation.
 function M.OnWhisper(key, text, now)
@@ -489,10 +518,15 @@ function M.OnWhisper(key, text, now)
 		return nil
 	end
 	local t = R().tracking
-	local _, isNewContact = M.EnsureContact(key, now, t.post)
+	local contact, isNewContact = M.EnsureContact(key, now, t.post)
 	M.LogChat(key, false, text, now)
+	-- The post's name and purpose are copied onto the lead, so they survive the post being deleted.
+	local post = t.post and M.GetPost(t.post)
+	local kind = post and M.PostKind(post) or "sell"
 	lead = { id = M.NewId(), contact = key, post = t.post, offer = t.offer, campaign = t.campaign, sentAt = t.postTime,
+		kind = kind, source = post and post.name or (t.offer and (t.offer .. " offer")) or nil,
 		text = U.Shorten(text, 255), time = now, started = now, status = "open", count = 1 }
+	M.AddTag(contact, kind)
 	table.insert(R().leads, lead)
 	return lead, true, isNewContact
 end
@@ -1249,7 +1283,7 @@ function M.Export()
 	for _, p in ipairs(r.posts) do
 		local t = {}
 		for _, k in ipairs(ns.TARGETS) do if p.targets[k] then t[#t + 1] = k end end
-		line("P", p.name, p.text, table.concat(t, ","), p.owner)
+		line("P", p.name, p.text, table.concat(t, ","), p.owner or "", M.PostKind(p))
 	end
 	local keys = {}
 	for k in pairs(r.contacts) do keys[#keys + 1] = k end
@@ -1303,7 +1337,7 @@ function M.Import(text, now)
 		if kind == "P" and f[2] and not postByName[f[2]] then
 			local targets = {}
 			for k in (f[4] or ""):gmatch("[^,]+") do targets[k] = true end
-			local p = M.SavePost(nil, f[2], f[3], targets, (f[5] and f[5] ~= "") and f[5] or nil)
+			local p = M.SavePost(nil, f[2], f[3], targets, (f[5] and f[5] ~= "") and f[5] or nil, f[6])
 			if p then postByName[p.name] = p; added.posts = added.posts + 1 end
 		elseif kind == "C" and f[2] and f[2] ~= "" then
 			local c, isNew = M.EnsureContact(f[2], tonumber(f[6]) or now)

@@ -925,4 +925,40 @@ do
 	eq(M.RecordOffer("Red Linen Bag", 5030), false, "tracking stays off when posting is set not to switch it on")
 end
 
+-- what a post is for: selling, looking for, group; leads and contacts keep it
+do
+	fresh()
+	local sell = M.SavePost(nil, "Bags", "WTS bags", { SAY = true })
+	eq(sell.kind, "sell", "a post is for selling unless told otherwise")
+	local tank = M.SavePost(nil, "Tank", "Tank LFG for RFC", { SAY = true }, nil, "group")
+	eq(tank.kind, "group", "group post")
+	eq(M.SavePost(tank.id, "Tank", "Tank LFG for RFC", { SAY = true }).kind, "group", "saving again without a purpose keeps it")
+	eq(M.SavePost(nil, "Odd", "x", { SAY = true }, nil, "nonsense").kind, "sell", "an unknown purpose becomes selling")
+	eq(M.PostKind({}), "sell", "posts from before purposes are selling")
+
+	M.SetTracking(true, 6000)
+	M.RecordSend(tank, "SAY", 6000, "Barrens")
+	local lead = M.OnWhisper("Healer-Stormrage", "we need a tank for WC!", 6010)
+	eq(lead.kind, "group", "the lead keeps the post's purpose")
+	eq(M.LeadSource(lead), "Tank", "and which post it answered")
+	eq(DB.R.contacts["Healer-Stormrage"].tags, "group", "the contact is tagged with it")
+	M.AddTag(DB.R.contacts["Healer-Stormrage"], "group")
+	eq(DB.R.contacts["Healer-Stormrage"].tags, "group", "a tag is added once")
+	M.AddTag(DB.R.contacts["Healer-Stormrage"], "sell")
+	eq(DB.R.contacts["Healer-Stormrage"].tags, "group, sell", "more tags are added after a comma")
+	M.DeletePost(tank.id)
+	eq(M.LeadSource(lead), "Tank", "the post's name survives deleting the post")
+	eq(M.LeadKind(lead), "group", "and so does its purpose")
+	eq(M.LeadKind({ post = sell.id }), "sell", "older leads take the purpose from their post")
+
+	local want = M.SavePost(nil, "WTB", "WTB Linen Cloth", { TRADE = true }, nil, "buy")
+	local dump = M.Export()
+	fresh()
+	M.Import(dump, 7000)
+	local back
+	for _, p in ipairs(DB.R.posts) do if p.name == "WTB" then back = p end end
+	eq(back and back.kind, "buy", "purpose survives export and import")
+	eq(want ~= nil, true, "buy post saved")
+end
+
 print(("test_logic: %d checks passed"):format(count))

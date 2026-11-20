@@ -961,4 +961,43 @@ do
 	eq(want ~= nil, true, "buy post saved")
 end
 
+-- the game gives a blank realm name (it did after a client update): the data must not vanish
+do
+	local REAL = "CAMWOWUS2Realm11RP"
+	local function saved()
+		local s = DB.Init({}, REAL)
+		s.realms[REAL].contacts["Claire Paige-" .. REAL] = { key = "Claire Paige-" .. REAL, tags = "", notes = "" }
+		s.lastRealm = nil -- files written before the fix do not have it
+		s.realms[""] = DB.Init({}, "").realms[""] -- the empty book opened under the blank name
+		return s
+	end
+	eq(DB.ResolveRealm(nil, "Stormrage"), "Stormrage", "a real name is used")
+	eq(DB.ResolveRealm(nil, "", "Area 52"), "Area52", "a blank name is skipped for the next one")
+	eq(DB.ResolveRealm(nil, nil, "", nil), "Unknown", "nothing known at all")
+	local s = saved()
+	eq(DB.ResolveRealm(s, "", ""), REAL, "the only realm on file is used when the game gives no name")
+	s.lastRealm = REAL
+	s.realms.Other = {}
+	eq(DB.ResolveRealm(s, ""), REAL, "the realm used last time wins over guessing")
+
+	s = saved()
+	DB.Init(s, DB.ResolveRealm(s, "", ""))
+	eq(DB.realm, REAL, "the real realm is opened")
+	eq(DB.R.contacts["Claire Paige-" .. REAL] ~= nil, true, "the contacts are back")
+	eq(s.realms[""], nil, "the empty blank-named book is dropped")
+	eq(DB.setAside, nil, "nothing needed setting aside")
+	eq(s.lastRealm, REAL, "the realm is remembered for next time")
+
+	s = saved()
+	table.insert(s.realms[""].posts, { id = 1, name = "Made today", text = "x", targets = { SAY = true } })
+	DB.Init(s, REAL)
+	eq(s.realms[""], nil, "a blank-named book is never used again")
+	eq(DB.setAside, "Recovered (blank realm name)", "but what was made in it is kept")
+	eq(s.realms["Recovered (blank realm name)"].posts[1].name, "Made today", "kept whole")
+
+	eq(DB.HasUserData({ posts = {}, leads = {}, orders = {}, campaigns = {}, contacts = {}, mailTemplates = { {} } }), false,
+		"seeded letters alone are not user data")
+	fresh()
+end
+
 print(("test_logic: %d checks passed"):format(count))

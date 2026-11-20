@@ -54,6 +54,37 @@ end
 
 local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates", "campaigns" }
 
+-- Which realm's data to use. The game can give a blank realm name (it did after a client
+-- update), and a blank name would open an empty book. So: the first name given that is not
+-- blank, else the realm used last time, else the only realm on file, else "Unknown".
+function DB.ResolveRealm(saved, ...)
+	for i = 1, select("#", ...) do
+		local v = select(i, ...)
+		if type(v) == "string" then
+			v = v:gsub("[%s%-]", "")
+			if v ~= "" then return v end
+		end
+	end
+	if type(saved) == "table" then
+		if type(saved.lastRealm) == "string" and saved.lastRealm ~= "" then return saved.lastRealm end
+		local only, n = nil, 0
+		for k in pairs(type(saved.realms) == "table" and saved.realms or {}) do
+			if k ~= "" then only, n = k, n + 1 end
+		end
+		if n == 1 then return only end
+	end
+	return "Unknown"
+end
+
+-- Anything a person made: posts, contacts, leads, orders or campaigns.
+function DB.HasUserData(R)
+	if type(R) ~= "table" then return false end
+	for _, k in ipairs({ "posts", "leads", "orders", "campaigns" }) do
+		if type(R[k]) == "table" and #R[k] > 0 then return true end
+	end
+	return type(R.contacts) == "table" and next(R.contacts) ~= nil
+end
+
 function DB.Init(saved, realm)
 	saved = type(saved) == "table" and saved or {}
 	saved.version = saved.version or DB.VERSION
@@ -76,6 +107,18 @@ function DB.Init(saved, realm)
 	if type(saved.vendorPrices) ~= "table" then saved.vendorPrices = {} end
 
 	saved.realms = saved.realms or {}
+	-- A book opened under a blank realm name: dropped when empty, set aside when not, so it
+	-- never hides the real one again.
+	DB.setAside = nil
+	if realm ~= "" and saved.realms[""] then
+		if DB.HasUserData(saved.realms[""]) then
+			local key = "Recovered (blank realm name)"
+			saved.realms[key] = saved.realms[key] or saved.realms[""]
+			DB.setAside = key
+		end
+		saved.realms[""] = nil
+	end
+	if realm ~= "" and realm ~= "Unknown" then saved.lastRealm = realm end
 	local R = saved.realms[realm] or {}
 	saved.realms[realm] = R
 	for _, k in ipairs(LISTS) do R[k] = R[k] or {} end

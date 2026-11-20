@@ -194,9 +194,14 @@ do
 end
 
 ns.On("PLAYER_LOGIN", function()
-	local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName() or "Unknown"):gsub("[%s%-]", "")
+	local function ask(f, ...) if type(f) == "function" then local ok, a, b = pcall(f, ...); if ok then return a, b end end end
+	local _, fullRealm = ask(rawget(_G, "UnitFullName"), "player")
+	local realm = DB.ResolveRealm(WoWCRMDB, ask(rawget(_G, "GetNormalizedRealmName")), ask(rawget(_G, "GetRealmName")), fullRealm)
 	WoWCRMDB = DB.Init(WoWCRMDB, realm)
 	ns.ready = true
+	if DB.setAside then
+		ns.Print("the game gave a blank realm name for a while; what was saved in that time is kept aside as \"" .. DB.setAside .. "\" in your saved data.")
+	end
 	M.me = U.NormName(ns.MyName(), DB.realm)
 	local names, items = M.RepairSplitNames(), M.RepairJoinedItems()
 	local leads = M.MergeDuplicateLeads()

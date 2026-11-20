@@ -54,9 +54,20 @@ end
 
 local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates", "campaigns" }
 
--- Which realm's data to use. The game can give a blank realm name (it did after a client
--- update), and a blank name would open an empty book. So: the first name given that is not
--- blank, else the realm used last time, else the only realm on file, else "Unknown".
+-- Anything a person made: posts, contacts, leads, orders, campaigns or product prices.
+function DB.HasUserData(R)
+	if type(R) ~= "table" then return false end
+	for _, k in ipairs({ "posts", "leads", "orders", "campaigns" }) do
+		if type(R[k]) == "table" and #R[k] > 0 then return true end
+	end
+	return (type(R.contacts) == "table" and next(R.contacts) ~= nil)
+		or (type(R.products) == "table" and next(R.products) ~= nil)
+end
+
+-- Which realm's data to use. After a client update the game gave a blank realm name, and a
+-- blank name opened an empty book that hid everything. So: the first name the game gives that
+-- is not blank; when there is none, the realm used last time if it holds your data, else the
+-- one realm that holds data, else the realm used last time, else "Unknown".
 function DB.ResolveRealm(saved, ...)
 	for i = 1, select("#", ...) do
 		local v = select(i, ...)
@@ -66,23 +77,17 @@ function DB.ResolveRealm(saved, ...)
 		end
 	end
 	if type(saved) == "table" then
-		if type(saved.lastRealm) == "string" and saved.lastRealm ~= "" then return saved.lastRealm end
+		local realms = type(saved.realms) == "table" and saved.realms or {}
+		local last = type(saved.lastRealm) == "string" and saved.lastRealm ~= "" and saved.lastRealm or nil
+		if last and DB.HasUserData(realms[last]) then return last end
 		local only, n = nil, 0
-		for k in pairs(type(saved.realms) == "table" and saved.realms or {}) do
-			if k ~= "" then only, n = k, n + 1 end
+		for k, R in pairs(realms) do
+			if k ~= "" and DB.HasUserData(R) then only, n = k, n + 1 end
 		end
 		if n == 1 then return only end
+		if last then return last end
 	end
 	return "Unknown"
-end
-
--- Anything a person made: posts, contacts, leads, orders or campaigns.
-function DB.HasUserData(R)
-	if type(R) ~= "table" then return false end
-	for _, k in ipairs({ "posts", "leads", "orders", "campaigns" }) do
-		if type(R[k]) == "table" and #R[k] > 0 then return true end
-	end
-	return type(R.contacts) == "table" and next(R.contacts) ~= nil
 end
 
 function DB.Init(saved, realm)
@@ -117,6 +122,10 @@ function DB.Init(saved, realm)
 			DB.setAside = key
 		end
 		saved.realms[""] = nil
+	end
+	-- Other books with nothing in them (opened by mistake under a wrong name) are removed.
+	for k, other in pairs(saved.realms) do
+		if k ~= realm and not DB.HasUserData(other) then saved.realms[k] = nil end
 	end
 	if realm ~= "" and realm ~= "Unknown" then saved.lastRealm = realm end
 	local R = saved.realms[realm] or {}

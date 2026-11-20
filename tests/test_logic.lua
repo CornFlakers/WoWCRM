@@ -997,6 +997,21 @@ do
 
 	eq(DB.HasUserData({ posts = {}, leads = {}, orders = {}, campaigns = {}, contacts = {}, mailTemplates = { {} } }), false,
 		"seeded letters alone are not user data")
+
+	-- the second slip: a book opened under a wrong name ("Paige", from "Claire Paige") and
+	-- remembered as the last realm. With no realm name from the game, the book with data wins.
+	s = saved()
+	s.realms[""] = nil
+	s.realms.Paige = DB.Init({}, "Paige").realms.Paige
+	s.lastRealm = "Paige"
+	local pick = DB.ResolveRealm(s, "", "")
+	eq(pick, REAL, "the realm holding your data wins over an empty one remembered last")
+	DB.Init(s, pick)
+	eq(s.realms.Paige, nil, "the empty wrong book is removed")
+	eq(s.lastRealm, REAL, "and the right realm is remembered")
+	eq(DB.R.contacts["Claire Paige-" .. REAL] ~= nil, true, "contacts are there")
+	eq(DB.ResolveRealm(s, "", ""), REAL, "and stay found next time")
+	eq(DB.HasUserData({ products = { x = {} } }), true, "product prices count as your data")
 	fresh()
 end
 

@@ -194,9 +194,10 @@ do
 end
 
 ns.On("PLAYER_LOGIN", function()
-	local function ask(f, ...) if type(f) == "function" then local ok, a, b = pcall(f, ...); if ok then return a, b end end end
-	local _, fullRealm = ask(rawget(_G, "UnitFullName"), "player")
-	local realm = DB.ResolveRealm(WoWCRMDB, ask(rawget(_G, "GetNormalizedRealmName")), ask(rawget(_G, "GetRealmName")), fullRealm)
+	-- Only the two realm-name calls: UnitFullName is no help, since on this client a character
+	-- name with a space in it ("Claire Paige") comes back as name "Claire", realm "Paige".
+	local function ask(f) if type(f) == "function" then local ok, v = pcall(f); if ok then return v end end end
+	local realm = DB.ResolveRealm(WoWCRMDB, ask(rawget(_G, "GetNormalizedRealmName")), ask(rawget(_G, "GetRealmName")))
 	WoWCRMDB = DB.Init(WoWCRMDB, realm)
 	ns.ready = true
 	if DB.setAside then

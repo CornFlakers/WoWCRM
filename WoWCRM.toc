@@ -1,12 +1,13 @@
 ## Interface: 16001
 ## Title: WoW CRM
-## Notes: Run selling campaigns: one-click posts, whisper leads, customers, orders, follow-up mail and results per post.
-## OptionalDeps: Mastercraft, Auctionator, TradeSkillMaster, BagBrother
+## Notes: Your personal CRM: whispers become contacts, posts by purpose, orders, bag offers, follow-ups and results per post.
+## OptionalDeps: Mastercraft, Auctionator, TradeSkillMaster, BagBrother, Questie
 ## Version: @project-version@
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 ## SavedVariables: WoWCRMDB
 ## AddonCompartmentFunc: WoWCRM_OnCompartmentClick
 ## X-License: MIT
+## X-Curse-Project-ID: 1818127
 
 Util.lua
 DB.lua

@@ -199,10 +199,15 @@ ns.On("PLAYER_LOGIN", function()
 	ns.ready = true
 	M.me = U.NormName(ns.MyName(), DB.realm)
 	local names, items = M.RepairSplitNames(), M.RepairJoinedItems()
+	local leads = M.MergeDuplicateLeads()
 	M.RefreshStatuses()
 	if names + items > 0 then
 		ns.Print(("tidied up %d contact%s saved under half a name and %d old order%s."):format(
 			names, names == 1 and "" or "s", items, items == 1 and "" or "s"))
+		ns.Changed()
+	end
+	if leads > 0 then
+		ns.Print(("folded %d duplicate lead%s into one lead per person."):format(leads, leads == 1 and "" or "s"))
 		ns.Changed()
 	end
 	local on = M.TrackingState(U.Now())
@@ -270,8 +275,15 @@ SlashCmdList["WOWCRM"] = function(msg)
 		ns.UI.ToggleFollowUps()
 	elseif cmd == "watch" then
 		ns.UI.WatchFollowUps(true)
+	elseif cmd == "reagents" and rest == "check" then
+		ns.Reagents.HookAll()
+		ns.Print("profession window help is " .. (DB.settings.reagentHelp and "ON" or "OFF") .. ".")
+		for _, line in ipairs(ns.Reagents.Status()) do ns.Print(line) end
+	elseif cmd == "reagents" then
+		DB.settings.reagentHelp = not DB.settings.reagentHelp
+		ns.Print("double-click help in the profession window is " .. (DB.settings.reagentHelp and "ON." or "OFF."))
 	else
-		ns.Print("commands: /crm, /crm follow, /crm watch, /crm campaign, /crm bar, /crm track [on|off], /crm add Name, /crm probe")
+		ns.Print("commands: /crm, /crm follow, /crm watch, /crm campaign, /crm bar, /crm track [on|off], /crm add Name, /crm reagents [check], /crm probe")
 	end
 end
 

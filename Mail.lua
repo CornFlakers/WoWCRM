@@ -25,7 +25,7 @@ function Mail.Vars(key)
 	end
 	if latest then
 		vars.item = M.OrderTitle(latest, 60)
-		vars.total = U.FormatMoney(latest.price)
+		vars.total = U.FormatMoney((latest.price or 0) > 0 and latest.price or latest.quote or 0)
 	end
 	return vars
 end

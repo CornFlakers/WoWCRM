@@ -3,7 +3,7 @@
 A seller's notebook for World of Warcraft. Post your adverts with one click, catch the people who whisper back, and keep track of what each customer bought.
 
 - **Posts** — save adverts and send them to Say, Yell, General, Trade, Party or Guild. One click sends one message to one channel.
-- **Contact tracking** — switch it on, make your posts, and everyone who whispers you becomes a lead and a contact.
+- **Contact tracking** — posting switches it on; everyone who whispers you afterwards becomes a lead and a contact, with the whole conversation kept.
 - **Contacts** — status, tags, notes, and who referred them.
 - **Orders** — what was sold, for how much, and whether it is paid. Completed trades and cash-on-delivery mail offer to fill the order in for you.
 - **Lifetime value and referrals** — per customer, plus revenue per post on the dashboard.
@@ -23,14 +23,16 @@ Copy this folder into `World of Warcraft\_forever_\Interface\AddOns\` as `WoWCRM
 | `/crm bar` | Show or hide the quick-post bar |
 | `/crm track` | Turn contact tracking on or off |
 | `/crm add Name` | Add a contact |
+| `/crm reagents` | Turn double-click help in the profession window on or off |
+| `/crm reagents check` | Say which profession window this client has and whether WoW CRM is hooked into it |
 | `/crm probe` | Check how this client handles chat and mail |
 
 A typical session:
 
 1. `/crm`, write a post on the **Posts** tab, tick its channels, **Save post**.
-2. Press **Turn on contact tracking**.
-3. Click **Post to …** once per channel (or use the quick-post bar).
-4. Replies appear on the **Leads** tab. Whisper back, then **New order** when they buy.
+2. Post from the quick-post bar (`/crm bar`) or the Posts tab. Contact tracking switches on by itself; the top of the bar shows it and counts down until it switches off again.
+3. Replies appear on the **Leads** tab with the conversation. Whisper back, then **Make it an order** when they buy.
+4. Trade with them. The trade fills in that order.
 
 ## Posting without spamming
 
@@ -69,6 +71,42 @@ The **Products** tab lists your recipes by profession and category with material
 
 Recipes are read from the Mastercraft add-on's scan of your professions, and prices from TradeSkillMaster or Auctionator (vendor price otherwise). Without Mastercraft the tab is empty; everything else works.
 
+### Bag offers (out in the world)
+
+For players you meet while questing, who carry cloth but not much gold. The quick-post bar has two buttons at the top: **Open WoW CRM** (the window, on the page you left it) and **Products** (straight to the bag offers). On the Products tab, **Bag offers** / **All recipes** switch between the two views.
+
+The offers are the biggest plain bag of each cloth: Red Linen Bag, Red and Green Woolen Bag, Black and Green Silk Pack, Red Mageweave Bag, then Runecloth and Mooncloth Bag once you have them. Bags you mark as products are offered as well. Target a player and the bags that suit their level are marked.
+
+Click a bag, then **Post to chat box**. A line like this goes into the chat box, on whatever channel it is set to (Say, usually), and is **not sent**. Change it if you like, then press Enter yourself:
+
+> Tailoring: Red Linen Bag makes [Red Linen Bag] (10 slot). Bring 8 Linen Cloth + 1s for Coarse Thread and Red Dye and a tip, and I'll make it right here!
+
+- The cloth is the raw cloth: bolts are broken down using your own bolt recipes, so they bring 8 Linen Cloth rather than 4 bolts.
+- The fee is what thread and dye cost at the vendor plus a tip (20% unless you change **Tip %**), rounded up to a whole silver. Vendor prices are read whenever you open a vendor window. Until then they are estimates, marked with \*.
+- The recipe and the bag are links when the game has them ready and they fit in 255 bytes; otherwise their names are used.
+- Change the wording in **Message**. `{recipe}`, `{item}`, `{size}`, `{mats}`, `{fee}` and `{vendor}` are filled in.
+- Placing an offer counts as a post for contact tracking: whoever whispers you afterwards becomes a lead, tagged with the bag you offered.
+
+## In the profession window
+
+WoW CRM adds to the game's own profession window (the Professions window on the Forever client; the older trade skill and Enchanting windows elsewhere):
+
+- **Double-click a material** under the recipe. If a recipe in this window makes it, for example the Coarse Grinding Stone that Patterned Bronze Bracers need, that recipe opens. Craft it, then press **Back to Patterned Bronze Bracers** beside the window. The button says *(ready)* once you hold enough. You can go several levels deep; Back retraces your steps.
+- **Materials you cannot make here** open a panel that says where they come from: the mining node or creature type, the vendor, or the profession that makes them (from Mastercraft's scan of your other characters). If Questie is installed, its database adds the named creatures, nodes and vendors. **Wowhead** gives you the item's Wowhead page, which lists every source with drop chances.
+- **Craft first.** When the chosen recipe needs parts you can make here but do not hold, a note beside the window lists them in order, for example *Craft first: 2x Coarse Grinding Stone*, and what you are still short of.
+
+Hover over a material to see which of the two a double-click will do. WoW CRM never crafts for you; the game's Create button stays yours. The built-in notes cover common ores, stone, bars, cloth, leather, herbs, elementals, enchanting materials and vendor supplies. The add-on cannot reach Wowhead from inside the game, so anything else is a click away on Wowhead.
+
+## From lead to order
+
+**One person, one lead.** A whisper joins the person's open lead whatever post it was about, so answering two of your posts, or chatting on after you posted again, no longer makes a second lead. Whispers within 12 hours of their last one also join it, even after it became an order. Leads split by older versions are folded into one at login.
+
+**The conversation.** Click a lead to see the post they answered, then every whisper both ways, with times. Whispers you send are kept for anyone already in your contacts (the last 200 per person, on your computer only).
+
+**Make it an order.** Pick one of your products (marked on the Products tab). The order starts as *quoted* with that item still to hand over and your price as the agreed price, for example a Red Mageweave Bag at 1g 90s. Or start an empty order and fill it in.
+
+**The trade completes it.** When you trade with them, the add-on offers to add the trade to that open order, however long ago it was made. Handing over the bag delivers the planned bag rather than adding a second one, and the gold received is recorded as received, not added to the agreed price. Nothing is counted twice. If you deliver another way, click the line on the Orders tab and press **Given**. **Mark paid** with no gold typed uses the agreed price.
+
 ## Orders, materials and tips
 
 An order has three parts:
@@ -103,7 +141,7 @@ When the game confirms the letter was sent, it is counted. The Mail tab and the 
 - **Chat messages are limited to 255 bytes, not 255 letters.** Accented letters count as 2 and an item link counts as its full hidden text. The editor shows the count as you type.
 - **One click, one message.** The game does not let add-ons post to public channels on a timer, and this add-on does not try. There is a minimum gap between posts to the same public channel (60 seconds by default).
 - **Saving.** The game writes add-on data to disk only when you log out or reload the interface. After a change, a **Save** button appears; clicking it reloads the interface, which takes a couple of seconds. If the game crashes before that, changes since the last save are lost. Use **Dashboard → Export** for a backup you can paste elsewhere.
-- **Tracking** only captures whispers after you have made a post, and switches itself off 30 minutes after your last post (adjustable).
+- **Tracking** only captures whispers after you have made a post, switches on when you post (you can turn that off on the Options tab), and switches itself off 30 minutes after your last post (adjustable).
 - **Mail** is filled in for you one letter at a time. There is no bulk mail.
 - Everything stays on your computer. The add-on sends nothing anywhere, and in-game gold is the only currency it understands.
 

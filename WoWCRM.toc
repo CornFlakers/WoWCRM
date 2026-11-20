@@ -12,6 +12,7 @@ Util.lua
 DB.lua
 Model.lua
 Catalog.lua
+Offers.lua
 Inventory.lua
 Core.lua
 Chat.lua
@@ -19,3 +20,5 @@ Price.lua
 Capture.lua
 Mail.lua
 UI.lua
+Sources.lua
+Reagents.lua

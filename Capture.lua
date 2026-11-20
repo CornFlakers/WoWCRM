@@ -68,7 +68,14 @@ local function offerTrade(t)
 	end
 	if gold > 0 then L[#L + 1] = "Gold received: " .. U.FormatMoney(gold) end
 	L[#L + 1] = ""
-	L[#L + 1] = current and ("Add this to their current order (" .. M.OrderTitle(current, 40) .. ")?") or "Record this as an order?"
+	if current then
+		local _, planned = M.ItemCounts(current)
+		L[#L + 1] = ("Add this to their order (%s%s%s)?"):format(M.OrderTitle(current, 40),
+			current.quote and (", agreed " .. U.FormatMoney(current.quote)) or "",
+			planned > 0 and ", not yet handed over" or "")
+	else
+		L[#L + 1] = "Record this as an order?"
+	end
 
 	local function record(orderId)
 		local o = M.AddTrade(orderId, key, { given = t.given, received = t.received, gold = gold }, U.Now())

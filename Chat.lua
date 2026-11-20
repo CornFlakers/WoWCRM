@@ -138,17 +138,19 @@ ns.On("CHAT_MSG_WHISPER", function(text, sender)
 	local key = U.NormName(sender, DB.realm)
 	if not key then return end
 	ns.lastWhisperFrom = key
-	local lead, isNew = M.OnWhisper(key, tostring(text or ""), U.Now())
-	if lead then
-		ns.Print((isNew and "new contact and lead: " or "lead from ") .. U.Display(key, DB.realm))
-		ns.Changed()
+	local hadContact = M.GetContact(key) ~= nil
+	local lead, isNewLead, isNewContact = M.OnWhisper(key, tostring(text or ""), U.Now())
+	if lead and isNewLead then
+		ns.Print((isNewContact and "new contact and lead: " or "new lead: ") .. U.Display(key, DB.realm))
 	end
+	if lead or hadContact then ns.Changed(not isNewLead) end
 end)
 
-ns.On("CHAT_MSG_WHISPER_INFORM", function(_, target)
+-- Whispers I send to a contact go into their conversation.
+ns.On("CHAT_MSG_WHISPER_INFORM", function(text, target)
 	if not ns.ready or isSecret(target) or type(target) ~= "string" then return end
-	local c = M.GetContact(U.NormName(target, DB.realm))
-	if c then c.lastContact = U.Now() end
+	if isSecret(text) then text = "(hidden during combat)" end
+	if M.OnWhisperSent(U.NormName(target, DB.realm), tostring(text or ""), U.Now()) then ns.Changed(true) end
 end)
 
 -- Opens the chat box with a message to this contact (or a reply to whoever whispered last),

@@ -1,6 +1,6 @@
 -- Tests for the files that hold no game API: Util, DB, Model.
 local ns = {}
-for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua", "Catalog.lua", "Inventory.lua" }) do
+for _, f in ipairs({ "Util.lua", "DB.lua", "Model.lua", "Catalog.lua", "Offers.lua", "Inventory.lua", "Sources.lua" }) do
 	assert(loadfile(f))("WoWCRM", ns)
 end
 local U, DB, M = ns.Util, ns.DB, ns.Model
@@ -106,8 +106,8 @@ eq(#DB.R.leads, 1, "one lead")
 
 -- lead for an existing contact
 M.EnsureContact("Old-Stormrage", T - 500).status = "customer"
-local lead3, isNew3 = M.OnWhisper("Old-Stormrage", "another one please", T + 30)
-eq(lead3 ~= nil and not isNew3, true, "existing contact gets a lead, not a new contact")
+local lead3, newLead3, isNew3 = M.OnWhisper("Old-Stormrage", "another one please", T + 30)
+eq(lead3 ~= nil and newLead3 and not isNew3, true, "existing contact gets a lead, not a new contact")
 eq(M.GetContact("Old-Stormrage").status, "customer", "existing status kept")
 
 -- ignored players
@@ -692,5 +692,237 @@ M.SetTracking(true, T)
 DB.Init(saved, "R")
 eq(#DB.R.posts, 1, "data kept across re-init")
 eq(DB.R.tracking.on, true, "tracking kept across a reload")
+
+-- posting switches tracking on by itself, unless that is turned off
+fresh()
+post = M.SavePost(nil, "Bags", "WTS bags", { SAY = true })
+M.RecordSend(post, "SAY", T, "City")
+eq(select(2, M.TrackingState(T + 1)), true, "a post switches tracking on and starts capturing")
+local _, _, mins, secs = M.TrackingState(T + 60)
+eq(secs, 29 * 60, "seconds left for the bar's countdown")
+fresh()
+DB.settings.autoTrack = false
+post = M.SavePost(nil, "Bags", "WTS bags", { SAY = true })
+M.RecordSend(post, "SAY", T, "City")
+eq(M.TrackingState(T + 1), false, "with the option off, posting leaves tracking off")
+
+-- one conversation is one lead, whatever post it was about
+fresh()
+local p1 = M.SavePost(nil, "Bags", "WTS bags", { SAY = true })
+local p2 = M.SavePost(nil, "Robes", "WTS robes", { SAY = true })
+M.RecordSend(p1, "SAY", T, "City")
+local la = M.OnWhisper("Dee-Stormrage", "how much for a bag?", T + 10)
+eq(M.OnWhisperSent("Dee-Stormrage", "1g 90s with my mats", T + 20), true, "my reply is kept")
+eq(M.OnWhisperSent("Stranger-Stormrage", "hi", T + 21), false, "whispers to non-contacts are not kept")
+M.RecordSend(p2, "SAY", T + 200, "City")
+local lb, newB = M.OnWhisper("Dee-Stormrage", "and is the robe ready?", T + 210)
+eq(lb.id, la.id, "a whisper after another post joins the same lead")
+eq(newB, false, "no new lead")
+eq(la.post, p1.id, "the lead keeps the post that started it")
+eq(#DB.R.leads, 1, "still one lead")
+local chat = M.LeadChat(la)
+eq(#chat, 3, "conversation: their whisper, my reply, their next whisper")
+eq(chat[2].me, true, "my reply in order")
+eq(chat[3].text, "and is the robe ready?", "latest whisper last")
+
+-- turning the lead into an order shell at the product price
+DB.R.products["Tailoring|Red Mageweave Bag"] = { name = "Red Mageweave Bag", profession = "Tailoring", output = 10051, price = 19000 }
+DB.R.products["Tailoring|Bolt of Silk"] = { name = "Bolt of Silk", profession = "Tailoring", output = 4305 }
+local choices = M.ProductChoices(function(id) return id == 4305 and 1200 or nil end)
+eq(#choices, 2, "marked products offered")
+eq(choices[1].name, "Bolt of Silk", "sorted by name")
+eq(choices[1].price, 1200, "no price of my own: market price")
+eq(choices[2].price, 19000, "my price used")
+local shell = M.LeadToOrder(la.id, { name = "Red Mageweave Bag", price = 19000 }, 1, T + 300)
+eq(shell.status, "quoted", "shell order is quoted")
+eq(shell.quote, 19000, "agreed price from the Products tab")
+eq(shell.price, 0, "no gold received yet")
+eq(shell.items[1].planned, true, "the bag is still to hand over")
+eq(la.status, "won", "lead closed")
+eq(la.order, shell.id, "lead points at its order")
+eq(shell.post, p1.id, "order credited to the post that brought the lead")
+eq(M.SoldCounts()["Red Mageweave Bag"], nil, "a planned bag is not counted as sold")
+
+-- chatting on after the order does not start a new lead
+local lc, newC = M.OnWhisper("Dee-Stormrage", "on my way", T + 400)
+eq(lc.id, la.id, "whisper after the order joins the same lead")
+eq(newC, false, "no new lead after the order")
+eq(M.OnWhisper("Dee-Stormrage", "thanks again!", T + 13 * 3600) ~= la, true, "a day later it is a new conversation")
+eq(#DB.R.leads, 1, "but only while tracking is capturing (it is off by then)")
+
+-- the trade fills in the shell instead of making a second order
+eq(M.CurrentOrder("Dee-Stormrage", T + 5 * 3600).id, shell.id, "an open order is found however old")
+M.AddTrade(shell.id, "Dee-Stormrage", { given = {}, received = { { name = "Mageweave Cloth", qty = 12, value = 500 } }, gold = 0 }, T + 5 * 3600)
+eq(shell.status, "in progress", "materials in, bag not handed over yet")
+eq(shell.received[1].kind, "mats", "cloth before delivery is materials")
+M.AddTrade(shell.id, "Dee-Stormrage", { given = { { name = "Red Mageweave Bag", qty = 1 } }, received = {}, gold = 19000 }, T + 6 * 3600)
+eq(#shell.items, 1, "the planned bag became the delivered bag, not a second line")
+eq(shell.items[1].planned, nil, "handed over")
+eq(shell.items[1].qty, 1, "still one bag")
+eq(shell.price, 19000, "gold is what was received, not the quote plus the gold")
+eq(shell.status, "paid", "paid on delivery with gold")
+eq(#DB.R.orders, 1, "one order for the job")
+eq(M.LTV("Dee-Stormrage"), 19000, "lifetime value counted once")
+eq(M.SoldCounts()["Red Mageweave Bag"], 1, "sold once")
+
+-- marking a quoted order paid with no gold typed uses the agreed price
+local l2 = M.OnWhisper("Eve-Stormrage", "bag please", T + 6 * 3600 + 10)
+M.SetTracking(true, T + 6 * 3600)
+M.RecordSend(p1, "SAY", T + 6 * 3600 + 20, "City")
+l2 = M.OnWhisper("Eve-Stormrage", "bag please", T + 6 * 3600 + 30)
+local o2 = M.LeadToOrder(l2.id, { name = "Red Mageweave Bag", price = 19000 }, 2, T + 6 * 3600 + 40)
+eq(o2.quote, 38000, "agreed price times quantity")
+M.SaveOrder(o2.id, { contact = "Eve-Stormrage", items = o2.items, price = 0, status = "paid", quote = o2.quote }, T + 6 * 3600 + 50)
+eq(o2.price, 38000, "paid at the agreed price")
+eq(o2.items[1].planned, true, "planned flag survives a save")
+
+-- export keeps the agreed price and what is still to hand over
+local text = M.Export()
+fresh()
+M.Import(text, T)
+local back
+for _, o in ipairs(DB.R.orders) do if o.contact == "Eve-Stormrage" then back = o end end
+eq(back.quote, 38000, "agreed price exported")
+eq(back.items[1].planned, true, "planned items exported")
+
+-- earlier duplicate leads are folded into one per person
+fresh()
+DB.R.leads = {
+	{ id = 1, contact = "Fay-Stormrage", status = "open", time = 100, count = 2, text = "first" },
+	{ id = 2, contact = "Fay-Stormrage", status = "open", time = 300, count = 1, text = "second" },
+	{ id = 3, contact = "Fay-Stormrage", status = "dismissed", time = 50, count = 1, text = "old" },
+	{ id = 4, contact = "Gus-Stormrage", status = "open", time = 200, count = 1, text = "only" },
+}
+eq(M.MergeDuplicateLeads(), 1, "one duplicate folded")
+eq(#DB.R.leads, 3, "dismissed and other people's leads kept")
+eq(DB.R.leads[1].count, 3, "messages added together")
+eq(DB.R.leads[1].time, 300, "latest message time kept")
+eq(M.MergeDuplicateLeads(), 0, "nothing to fold the second time")
+
+-- the conversation is capped
+fresh()
+M.EnsureContact("Hal-Stormrage", T)
+for i = 1, M.CHAT_KEEP + 5 do M.LogChat("Hal-Stormrage", i % 2 == 0, "m" .. i, T + i) end
+eq(#M.GetContact("Hal-Stormrage").chat, M.CHAT_KEEP, "oldest whispers dropped past the limit")
+eq(M.GetContact("Hal-Stormrage").chat[1].text, "m6", "the newest are kept")
+
+-- where materials come from, and what to craft first
+do
+	local S = ns.Sources
+	eq(S.ItemID("|cffffffff|Hitem:2838::::::::|h[Heavy Stone]|h|r"), 2838, "item id from a link")
+	eq(S.ItemID(nil), nil, "no link, no id")
+	eq(S.Notes("Heavy Stone")[1]:find("Iron Deposits", 1, true) ~= nil, true, "heavy stone comes from iron")
+	eq(S.Notes("nothing like this"), nil, "unknown item has no notes")
+	eq(S.WowheadURL(2838), "https://www.wowhead.com/forever/item=2838", "wowhead item page")
+
+	-- Patterned Bronze Bracers need Bronze Bars and a Coarse Grinding Stone; the stone is made from Coarse Stone.
+	local book = {
+		[1] = { name = "Patterned Bronze Bracers", reagents = { { key = 2841, name = "Bronze Bar", qty = 5 }, { key = 3478, name = "Coarse Grinding Stone", qty = 2 } } },
+		[3478] = { name = "Coarse Grinding Stone", made = 1, reagents = { { key = 2836, name = "Coarse Stone", qty = 2 } } },
+	}
+	local held = { [2841] = 5, [2836] = 1 }
+	local steps, missing = S.Plan(1, function(k) return book[k] end, function(k) return held[k] or 0 end)
+	eq(#steps, 1, "one thing to craft first")
+	eq(steps[1].name .. " x" .. steps[1].crafts, "Coarse Grinding Stone x2", "two grinding stones")
+	eq(#missing, 1, "short of one material")
+	eq(missing[1].name .. " " .. missing[1].qty, "Coarse Stone 3", "three more coarse stone (four needed, one held)")
+	eq(S.PlanText(steps), "Craft first: 2x Coarse Grinding Stone", "plan text")
+
+	held[3478] = 2
+	steps = S.Plan(1, function(k) return book[k] end, function(k) return held[k] or 0 end)
+	eq(#steps, 0, "nothing to craft once you hold the stones")
+	eq(S.PlanText(steps), nil, "and no advice")
+
+	-- a recipe that makes two at a time, used twice down the tree, and a loop that must not hang
+	book[1].reagents[3] = { key = 50, name = "Part", qty = 1 }
+	book[3478].reagents[2] = { key = 50, name = "Part", qty = 1 }
+	book[50] = { name = "Part", made = 2, reagents = { { key = 1, name = "Patterned Bronze Bracers", qty = 1 } } }
+	held = {}
+	steps = S.Plan(1, function(k) return book[k] end, function() return 0 end)
+	local crafts = {}
+	for _, st in ipairs(steps) do crafts[st.name] = st.crafts end
+	eq(crafts.Part, 2, "three parts needed, two per craft")
+	eq(crafts["Coarse Grinding Stone"], 2, "grinding stones still planned")
+	eq(steps[#steps].name, "Coarse Grinding Stone", "parts come before the stones that use them")
+
+	local trail = {}
+	S.Push(trail, { name = "A" }); S.Push(trail, { name = "A" }); S.Push(trail, { name = "B" })
+	eq(#trail, 2, "the same recipe twice in a row is remembered once")
+	eq(S.Pop(trail).name, "B", "back goes to the last one")
+	eq(S.Pop(trail).name, "A", "then the one before")
+	eq(S.Pop(trail), nil, "then nothing")
+end
+
+-- bag offers: raw cloth to bring, vendor mats plus a tip as the fee, and the line for the chat box
+do
+	local O = ns.Offers
+	local NAMES = { [20] = "Bolt of Linen Cloth", [21] = "Linen Cloth", [22] = "Bolt of Silk Cloth", [23] = "Silk Cloth",
+		[30] = "Coarse Thread", [31] = "Red Dye" }
+	local PRICE = { [30] = 10, [31] = 50 }
+	local list = {
+		{ id = 1, name = "Red Linen Bag", learned = true, output = 10, reagents = { { itemID = 20, qty = 4 }, { itemID = 30, qty = 1 }, { itemID = 31, qty = 1 } } },
+		{ id = 2, name = "Bolt of Linen Cloth", learned = true, output = 20, outputQty = 1, reagents = { { itemID = 21, qty = 2 } } },
+		{ id = 3, name = "Black Silk Pack", learned = false, output = 11, reagents = { { itemID = 22, qty = 5 }, { itemID = 31, qty = 1 } } },
+		{ id = 4, name = "Bolt of Silk Cloth", learned = true, output = 22, reagents = { { itemID = 23, qty = 4 } } },
+		{ id = 5, name = "Big Bag", output = 12, reagents = { { itemID = 21, qty = 3 } } },
+	}
+	local opts = { nameOf = function(id) return NAMES[id] end, vendorPrice = function(id) return PRICE[id], id == 31 end,
+		tip = 20, level = 30, extra = { ["Big Bag"] = true, ["Not There"] = true } }
+	local rows, missing = O.Build(list, opts)
+	eq(#rows, 3, "two of the usual bags, plus a bag marked as a product")
+	eq(rows[1].name, "Red Linen Bag", "linen first")
+	eq(#rows[1].bring, 1, "only the cloth is brought")
+	eq(rows[1].bring[1].name, "Linen Cloth", "bolts are broken down into cloth")
+	eq(rows[1].bring[1].qty, 8, "4 bolts at 2 cloth each are 8 cloth")
+	eq(#rows[1].vendor, 2, "thread and dye come from the vendor")
+	eq(rows[1].vendorCost, 60, "10c thread + 50c dye")
+	eq(rows[1].fee, 100, "60c and a 20% tip is 72c, rounded up to 1s")
+	eq(rows[1].estimated, true, "the dye price is only an estimate")
+	eq(rows[1].fits, false, "level 30 has moved past linen")
+	eq(rows[2].fits, true, "silk suits level 30")
+	eq(rows[2].learned, false, "not learned is shown, not hidden")
+	eq(rows[2].bring[1].qty, 20, "5 bolts of silk are 20 silk cloth")
+	eq(rows[3].name, "Big Bag", "products come after the usual bags")
+	eq(rows[3].min, nil, "a product has no level range")
+	eq(#missing, 6, "bags not in the recipe list are named")
+	eq(O.Fee(0, 20), 0, "no vendor mats, no fee")
+	eq(O.Fee(1000, 20), 1200, "10s and 20% is 12s")
+	eq(O.Fee(1001, 0), 1100, "rounded up to a whole silver")
+
+	-- a part made two at a time: 3 needed is two crafts
+	local two = O.RawMats({ reagents = { { itemID = 20, qty = 3 } } }, { [20] = { outputQty = 2, reagents = { { itemID = 21, qty = 5 } } } })
+	eq(two[1].qty, 10, "two crafts of 5 cloth")
+	-- recipes that make each other do not loop forever
+	local loop = { { id = 1, name = "Red Linen Bag", output = 10, reagents = { { itemID = 20, qty = 1 } } },
+		{ id = 2, name = "X", output = 20, reagents = { { itemID = 10, qty = 1 } } } }
+	eq(#O.Build(loop, opts), 1, "a loop between recipes still ends")
+
+	eq(O.MatsText({ { qty = 1, name = "A" }, { qty = 2, name = "B" }, { qty = 3, name = "C" } }), "1 A, 2 B and 3 C", "list wording")
+	eq(O.Text(rows[1], { profession = "Tailoring", itemLink = "[LINK]" }),
+		"Tailoring: Red Linen Bag makes [LINK]. Bring 8 Linen Cloth + 1s for Coarse Thread and Red Dye and a tip, and I'll make it right here!",
+		"the offer line")
+	local t = O.Text(rows[1], { recipeLink = ("x"):rep(200), itemLink = "[LINK]" })
+	eq(t:find("xxx", 1, true), nil, "a recipe link that does not fit is swapped for its name")
+	eq(t:find("[LINK]", 1, true) ~= nil, true, "the item link is kept when it fits")
+	eq(O.Text(rows[1], { template = "{item} {size}!", itemLink = "I" }), "I !", "own wording; no size when unknown")
+	local none, why = O.Text(rows[1], { template = ("z"):rep(300) })
+	eq(none, nil, "too long for chat")
+	eq(why ~= nil, true, "and says why")
+
+	-- an offer placed in the chat box switches tracking on, and replies become leads about that bag
+	fresh()
+	eq(M.RecordOffer("Red Linen Bag", 5000), true, "tracking switched on")
+	local on, capturing = M.TrackingState(5000)
+	eq(on and capturing, true, "whispers are captured after an offer")
+	local lead = M.OnWhisper("Newbie-Stormrage", "how much for the bag?", 5010)
+	eq(lead.offer, "Red Linen Bag", "the lead remembers the bag offered")
+	eq(lead.post, nil, "an offer is not a saved post")
+	local p2 = M.SavePost(nil, "Ad", "WTS bags", { SAY = true })
+	M.RecordSend(p2, "SAY", 5020, "Barrens")
+	eq(DB.R.tracking.offer, nil, "a post afterwards takes over")
+	DB.settings.autoTrack = false
+	DB.R.tracking = { on = false }
+	eq(M.RecordOffer("Red Linen Bag", 5030), false, "tracking stays off when posting is set not to switch it on")
+end
 
 print(("test_logic: %d checks passed"):format(count))

@@ -39,6 +39,14 @@ function methods:ClearFocus() self._focus = false end
 function methods:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
 function methods:CreateFontString() return widget("FontString", self) end
 function methods:CreateTexture() return widget("Texture", self) end
+function methods:GetFrameLevel() return 1 end
+function methods:GetStringHeight() return 12 end
+function methods:GetVerticalScrollRange() return 0 end
+function methods:GetScript(n) return self._scripts[n] end
+function methods:HookScript(n, f)
+	local old = self._scripts[n]
+	self._scripts[n] = old and function(...) old(...); f(...) end or f
+end
 
 -- ---------------------------------------------------------------- stand-in game API
 function CreateFrame(kind, name, parent)
@@ -96,6 +104,27 @@ C_TradeSkillUI = {
 }
 local mcOpened = 0
 function Mastercraft_Toggle() mcOpened = mcOpened + 1 end
+-- a stand-in for the game's Blacksmithing window
+local BS = {
+	{ name = "Armor", kind = "header" },
+	{ name = "Patterned Bronze Bracers", kind = "optimal", out = 2672, reagents = { { "Bronze Bar", 2841, 5 }, { "Coarse Grinding Stone", 3478, 2 } } },
+	{ name = "Coarse Grinding Stone", kind = "easy", out = 3478, reagents = { { "Coarse Stone", 2836, 2 } } },
+}
+local bsSel = 2
+local function ilink(id, name) return "|cffffffff|Hitem:" .. id .. "::::::::|h[" .. name .. "]|h|r" end
+function GetNumTradeSkills() return #BS end
+function GetTradeSkillInfo(i) local r = BS[i]; if r then return r.name, r.kind, 0, true end end
+function GetTradeSkillItemLink(i) local r = BS[i]; if r and r.out then return ilink(r.out, r.name) end end
+function GetTradeSkillNumMade() return 1, 1 end
+function GetTradeSkillNumReagents(i) return BS[i] and BS[i].reagents and #BS[i].reagents or 0 end
+function GetTradeSkillReagentInfo(i, r) local g = BS[i] and BS[i].reagents and BS[i].reagents[r]; if g then return g[1], nil, g[3], 0 end end
+function GetTradeSkillReagentItemLink(i, r) local g = BS[i] and BS[i].reagents and BS[i].reagents[r]; if g then return ilink(g[2], g[1]) end end
+function GetTradeSkillSelectionIndex() return bsSel end
+function GetTradeSkillLine() return "Blacksmithing", 100, 300 end
+function TradeSkillFrame_SetSelection(i) bsSel = i end
+function TradeSkillFrame_Update() end
+function ExpandTradeSkillSubClass() end
+function IsModifiedClick() return false end
 function GetTime() return clock end
 local tells = {}
 function ChatFrame_SendTell(name) tells[#tells + 1] = name end
@@ -148,7 +177,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	line = line:gsub("%s+$", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
-assert(#files == 11, "TOC should list 11 files, found " .. #files)
+assert(#files == 14, "TOC should list 14 files, found " .. #files)
 local globalsBefore = { codAmount = true }
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
@@ -312,6 +341,8 @@ eq(sent[#sent].text, "WTS enchants in City, whisper Seller", "with the post's te
 eq(#DB.R.postLog, logBefore, "a whisper is not counted as a post")
 
 -- tracking and whispers
+eq(M.TrackingState(clock), true, "posting earlier switched tracking on by itself")
+ns.SetTracking(false)
 fire("CHAT_MSG_WHISPER", "too early", "Early-Stormrage")
 eq(#DB.R.leads, 0, "no capture while tracking is off")
 click("Turn on contact tracking")
@@ -337,30 +368,43 @@ for _, w in ipairs(widgets) do
 end
 click("Whisper back", leads)
 eq(tells[1], "Ann", "whisper back opens a tell")
-click("New order", leads)
+-- the conversation so far: my reply goes into the thread
+fire("CHAT_MSG_WHISPER_INFORM", "20g with your mats", "Ann")
+eq(#M.GetContact("Ann-Stormrage").chat, 2, "their whisper and my reply are both kept")
+eq(M.GetContact("Ann-Stormrage").chat[2].me, true, "my reply is marked as mine")
+eq(#M.LeadChat(DB.R.leads[1]), 2, "the lead shows the whole conversation")
+-- a second post while we are still talking does not start a second lead
+clock = clock + 200
+eq(ns.Chat.Send(M.GetPost(DB.R.tracking.post), "SAY"), true, "another post goes out")
+fire("CHAT_MSG_WHISPER", "still keen on that enchant", "Ann")
+eq(#DB.R.leads, 2, "same conversation, same lead")
+eq(DB.R.leads[1].count, 2, "the lead counts both whispers")
+UI.Show("Leads")
+click("Make it an order", leads)
+click("Empty order", leads)
 local orders = UI.tabs.Orders.panel
-local oe = kind("EditBox", orders) -- contact, gold, title, notes, sold qty, sold name, received qty, name, value
-eq(#oe, 9, "order form fields")
+local oe = kind("EditBox", orders) -- contact, gold, title, agreed, notes, sold qty, sold name, received qty, name, value
+eq(#oe, 10, "order form fields")
+eq(#DB.R.orders, 1, "the lead became an order")
+eq(DB.R.leads[1].status, "won", "lead closed by the order")
+eq(DB.R.leads[1].order, DB.R.orders[1].id, "lead remembers its order")
 eq(oe[1]._text, "Ann", "contact carried over from the lead")
-click("Mark paid", orders)
-eq(#DB.R.orders, 0, "empty order refused")
-oe[6]:SetText("Weapon enchant")
+oe[7]:SetText("Weapon enchant")
 click("Add", orders)
 oe[2]:SetText("banana")
 click("Mark paid", orders)
-eq(#DB.R.orders, 0, "bad gold amount refused")
+eq(DB.R.orders[1].status, "quoted", "bad gold amount refused")
 oe[2]:SetText("12g 50s")
 click("Mark paid", orders)
 eq(#DB.R.orders, 1, "order saved")
 eq(DB.R.orders[1].items[1].name, "Weapon enchant", "sold item kept as its own line")
 eq(M.LTV("Ann-Stormrage"), 125000, "lifetime value from the paid order")
-eq(DB.R.leads[1].status, "won", "lead closed by the order")
 eq(M.GetContact("Ann-Stormrage").status, "customer", "lead promoted to customer")
 
 -- a tip in goods: typed value, then flipped to materials and back out of income
-oe[7]:SetText("20")
-oe[8]:SetText("Silk Cloth")
-oe[9]:SetText("5s")
+oe[8]:SetText("20")
+oe[9]:SetText("Silk Cloth")
+oe[10]:SetText("5s")
 click("Add payment", orders)
 click("Save order", orders)
 eq(M.LTV("Ann-Stormrage"), 135000, "goods received as payment add to lifetime value")
@@ -756,13 +800,224 @@ DB.Init(saved, "Stormrage")
 eq(#DB.R.posts, 1, "posts survive a reload")
 eq(DB.R.tracking.on, true, "tracking survives a reload")
 
+-- double-clicking materials in the profession window
+TradeSkillFrame = CreateFrame("Frame", "TradeSkillFrame")
+for i = 1, 8 do CreateFrame("Button", "TradeSkillReagent" .. i, TradeSkillFrame) end
+fire("ADDON_LOADED", "Blizzard_TradeSkillUI")
+local function dbl(i) local b = _G["TradeSkillReagent" .. i]; b._scripts.OnClick(b); clock = clock + 0.2; b._scripts.OnClick(b) end
+local RS = ns.Reagents.state.trade
+TradeSkillFrame_SetSelection(2); TradeSkillFrame_Update()
+eq(RS.dock._shown, true, "bracers need a grinding stone you do not hold: advice shown")
+eq(RS.dock.plan._text:find("Craft first: 2x Coarse Grinding Stone", 1, true) ~= nil, true, "it says what to craft first")
+clock = clock + 5
+TradeSkillReagent2._scripts.OnClick(TradeSkillReagent2)
+clock = clock + 5
+TradeSkillReagent2._scripts.OnClick(TradeSkillReagent2)
+eq(bsSel, 2, "two slow clicks are not a double-click")
+dbl(2)
+eq(bsSel, 3, "double-clicking the grinding stone opens its recipe")
+eq(RS.dock.back._text:find("Back to Patterned Bronze Bracers", 1, true) ~= nil, true, "with a way back")
+dbl(1)
+eq(bsSel, 3, "coarse stone has no recipe here: the recipe stays")
+eq(RS.panel._shown, true, "and the where-to-get-it panel opens")
+eq(RS.panel.body._text:find("Tin Veins", 1, true) ~= nil, true, "saying it is mined from tin veins")
+click("Wowhead", RS.panel)
+click("Back to Patterned Bronze Bracers", RS.dock)
+eq(bsSel, 2, "back returns to the bracers")
+eq(#RS.trail, 0, "and the trail is empty again")
+DB.settings.reagentHelp = false
+dbl(2)
+eq(bsSel, 2, "switched off, double-click does nothing")
+DB.settings.reagentHelp = true
+
+-- the same in the modern profession window (the Forever client's)
+do
+	local NAMES = { [2672] = "Patterned Bronze Bracers", [2841] = "Bronze Bar", [3478] = "Coarse Grinding Stone", [2836] = "Coarse Stone" }
+	C_Item = { GetItemNameByID = function(id) return NAMES[id] end }
+	local RECIPES = {
+		[101] = { name = "Patterned Bronze Bracers", out = 2672, slots = { { 2841, 5 }, { 3478, 2 } } },
+		[102] = { name = "Coarse Grinding Stone", out = 3478, slots = { { 2836, 2 } } },
+	}
+	local function schem(id)
+		local r = RECIPES[id]
+		if not r then return nil end
+		local list = {}
+		for i, sl in ipairs(r.slots) do list[i] = { required = true, quantityRequired = sl[2], reagents = { { itemID = sl[1] } } } end
+		return { name = r.name, outputItemID = r.out, quantityMin = 1, reagentSlotSchematics = list }
+	end
+	C_TradeSkillUI.GetAllRecipeIDs = function() return { 101, 102 } end
+	C_TradeSkillUI.GetRecipeSchematic = function(id) return schem(id) end
+	C_TradeSkillUI.GetRecipeInfo = function(id) return RECIPES[id] and { recipeID = id, name = RECIPES[id].name, learned = true } end
+	local cur = 101
+	C_TradeSkillUI.OpenRecipe = function(id) cur = id end
+	ProfessionsFrame = CreateFrame("Frame", "ProfessionsFrame")
+	local page = CreateFrame("Frame", nil, ProfessionsFrame)
+	ProfessionsFrame.CraftingPage = page
+	local fm = CreateFrame("Frame", nil, page)
+	page.SchematicForm = fm
+	local selected = 0
+	page.SelectRecipe = function(_, info) selected = selected + 1; cur = info.recipeID; fm:Init() end
+	local slots = {}
+	local resets = 0
+	-- like the game: each time a recipe is laid out, the material buttons get fresh handlers
+	fm.Init = function()
+		for _, slot in ipairs(slots) do
+			resets = resets + 1
+			slot.Button:SetScript("OnMouseDown", function() end)
+			slot.Button:SetScript("OnEnter", function() end)
+		end
+	end
+	fm.GetRecipeInfo = function() return C_TradeSkillUI.GetRecipeInfo(cur) end
+	local mouseOn
+	for i = 1, 2 do
+		local slot = CreateFrame("Frame", nil, fm)
+		slot.Button = CreateFrame("Button", nil, slot)
+		slot.Button.IsMouseOver = function(b) return mouseOn == b end
+		slot.GetReagentSlotSchematic = function() local sc = schem(cur); return sc and sc.reagentSlotSchematics[i] end
+		slots[i] = slot
+	end
+	fm.GetSlots = function() return slots end
+	fire("ADDON_LOADED", "Blizzard_Professions")
+	local MS = ns.Reagents.state.modern
+	eq(MS.hooked, true, "modern profession window hooked when it loads")
+	fm:Init()
+	eq(MS.dock._shown, true, "modern: craft-first advice shown")
+	eq(MS.dock.plan._text:find("Craft first: 2x Coarse Grinding Stone", 1, true) ~= nil, true, "modern: grinding stone first")
+	local MF = ns.Reagents.mouseFrame
+	eq(ns.Reagents.globalClicks, true, "clicks come from the game's mouse event")
+	local function press(i, which)
+		mouseOn = slots[i].Button
+		MF._scripts.OnEvent(MF, "GLOBAL_MOUSE_DOWN", which or "LeftButton")
+		mouseOn = nil
+	end
+	local function mdbl(i) press(i); clock = clock + 0.2; press(i) end
+	clock = clock + 5
+	press(2, "RightButton"); clock = clock + 0.1; press(2, "RightButton")
+	eq(cur, 101, "modern: right clicks do nothing")
+	mdbl(2)
+	eq(cur, 102, "modern: double-clicking the grinding stone opens its recipe")
+	eq(selected, 1, "picked in the open window, not by reopening it")
+	eq(MS.dock.back._text:find("Back to Patterned Bronze Bracers", 1, true) ~= nil, true, "modern: with a way back")
+	clock = clock + 5
+	mdbl(1)
+	eq(cur, 102, "modern: coarse stone has no recipe, so the recipe stays")
+	eq(MS.panel._shown, true, "modern: where-to-get-it panel opens")
+	eq(MS.panel.body._text:find("Tin Veins", 1, true) ~= nil, true, "modern: mined from tin veins")
+	click("Back to Patterned Bronze Bracers", MS.dock)
+	eq(cur, 101, "modern: back returns to the bracers")
+	-- again and again, as you move between recipes (the bug: it only worked the first time)
+	eq(resets > 0, true, "the stand-in window reset its button handlers")
+	for round = 1, 3 do
+		clock = clock + 5
+		mdbl(2)
+		eq(cur, 102, "round " .. round .. ": grinding stone recipe opens")
+		clock = clock + 5
+		click("Back to Patterned Bronze Bracers", MS.dock)
+		eq(cur, 101, "round " .. round .. ": back to the bracers")
+	end
+	press(1); clock = clock + 5; press(1)
+	eq(cur, 101, "two presses far apart are not a double-click")
+	press(1); clock = clock + 0.1; mouseOn = slots[2].Button; MF._scripts.OnEvent(MF, "GLOBAL_MOUSE_DOWN", "LeftButton"); mouseOn = nil
+	eq(cur, 101, "one press on each of two materials is not a double-click")
+	ProfessionsFrame:Hide()
+	clock = clock + 5
+	mdbl(2)
+	eq(cur, 101, "nothing happens while the window is closed")
+	ProfessionsFrame:Show()
+
+	-- the fallback for clients without the mouse event: hooks are made again after a reset
+	ns.Reagents.globalClicks = false
+	fm:Init()
+	clock = clock + 5
+	local b = slots[2].Button
+	b._scripts.OnMouseDown(b, "LeftButton"); clock = clock + 0.2; b._scripts.OnMouseDown(b, "LeftButton")
+	eq(cur, 102, "fallback: hooked again after the game replaced the handler")
+	click("Back to Patterned Bronze Bracers", MS.dock)
+	fm:Init()
+	clock = clock + 5
+	b._scripts.OnMouseDown(b, "LeftButton"); clock = clock + 0.2; b._scripts.OnMouseDown(b, "LeftButton")
+	eq(cur, 102, "fallback: and again after the next reset")
+	click("Back to Patterned Bronze Bracers", MS.dock)
+	ns.Reagents.globalClicks = true
+
+	local status = table.concat(ns.Reagents.Status(), " | ")
+	eq(status:find("ProfessionsFrame: present, hooked", 1, true) ~= nil, true, "/crm reagents check reports the hook")
+	C_Item = nil
+end
+
+-- bag offers: from the quick-post bar straight to a bag, then into the chat box unsent
+do
+	local list = MastercraftDB.recipes["Player-1"].Tailoring.list
+	local n0 = #list
+	list[#list + 1] = { id = 6686, name = "Red Linen Bag", category = "Bags", learned = true, output = 5762, outputQty = 1,
+		reagents = { { itemID = 2996, qty = 4 }, { itemID = 2320, qty = 1 }, { itemID = 2604, qty = 1 } } }
+	list[#list + 1] = { id = 2963, name = "Bolt of Linen Cloth", category = "Materials", learned = true, output = 2996, outputQty = 1,
+		reagents = { { itemID = 2589, qty = 2 } } }
+	local NAMES = { [5762] = "Red Linen Bag", [2996] = "Bolt of Linen Cloth", [2320] = "Coarse Thread", [2604] = "Red Dye", [2589] = "Linen Cloth" }
+	local SELL = { [2320] = 2, [2604] = 12 }
+	function GetItemInfo(id)
+		local nm = NAMES[id]
+		if nm then return nm, ilink(id, nm), 1, 1, 1, "", "", 1, "", 1, SELL[id] or 0 end
+	end
+	-- a vendor window: what it charges for Coarse Thread is remembered
+	function GetMerchantNumItems() return 1 end
+	function GetMerchantItemLink() return ilink(2320, "Coarse Thread") end
+	function GetMerchantItemInfo() return "Coarse Thread", nil, 10, 1 end
+	fire("MERCHANT_SHOW")
+	eq(DB.db.vendorPrices[2320], 10, "vendor price remembered")
+	function UnitExists() return true end
+	function UnitLevel() return 12 end
+
+	if not DB.settings.barShown then UI.ToggleBar() end
+	DB.settings.productsView = "catalog"
+	UI.Show("Dashboard")
+	click("Products", barRoot)
+	eq(DB.settings.productsView, "offers", "the bar's Products button opens the bag offers")
+	local prod = UI.tabs.Products.panel
+	local offer
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.name == "Red Linen Bag" and w.item.bring and inside(w, prod) and w._shown then offer = w end
+	end
+	eq(offer ~= nil, true, "Red Linen Bag offered")
+	eq(offer.item.bring[1].qty, 8, "4 bolts asked for as 8 Linen Cloth")
+	eq(offer.item.vendorCost, 58, "10c thread as seen at the vendor, dye estimated at 4 x 12c")
+	eq(offer.item.fee, 100, "58c and a 20% tip, rounded up to 1s")
+	eq(offer.item.fits, true, "suits the level 12 player targeted")
+	local before, sentBefore = #opened, #sent
+	offer._scripts.OnClick(offer)
+	click("Post to chat box", prod)
+	eq(#opened, before + 1, "the offer is placed in the chat box")
+	local line = opened[#opened]
+	eq(line:sub(1, 1) ~= "/", true, "no channel forced: it goes where the chat box is set")
+	eq(line:find("8 Linen Cloth", 1, true) ~= nil, true, "asks for the raw cloth")
+	eq(line:find("|Hitem:5762", 1, true) ~= nil, true, "links the bag")
+	eq(#sent, sentBefore, "nothing sent by the add-on")
+	eq(DB.R.tracking.offer, "Red Linen Bag", "tracking knows what was offered")
+	fire("CHAT_MSG_WHISPER", "ooh how much for the bag", "Questy")
+	local got
+	for _, l in ipairs(DB.R.leads) do if l.contact == "Questy-Stormrage" then got = l end end
+	eq(got and got.offer, "Red Linen Bag", "the reply is a lead tagged with the bag")
+
+	WoWCRMFrame:Hide()
+	click("Open WoW CRM", barRoot)
+	eq(WoWCRMFrame._shown, true, "the bar opens the window")
+	eq(UI.tabs.Products.panel._shown, true, "on the page last open")
+	click("All recipes", prod)
+	eq(DB.settings.productsView, "catalog", "back to the full recipe list")
+
+	for i = #list, n0 + 1, -1 do list[i] = nil end
+	GetItemInfo, GetMerchantNumItems, GetMerchantItemLink, GetMerchantItemInfo, UnitExists, UnitLevel = nil, nil, nil, nil, nil, nil
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,
 	SLASH_WOWCRM1 = true, SLASH_WOWCRM2 = true,
 	WoWCRMScanTooltip = true, -- hidden tooltip used to read bag sizes
 	WoWCRMMinimapButton = true,
+	TradeSkillFrame = true, ProfessionsFrame = true, -- the stand-in profession windows made by this test
 }
+for i = 1, 8 do allowed["TradeSkillReagent" .. i] = true end
 for k in pairs(_G) do
 	if not globalsBefore[k] and not allowed[k] then error("unexpected global: " .. tostring(k)) end
 end

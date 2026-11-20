@@ -6,7 +6,7 @@ Status: **approved; version 0.1.0 built. In-game checks (section 8) still to run
 
 - One click per channel: accepted.
 - Name: **WoW CRM** (folder and saved-data name `WoWCRM`).
-- Lead capture happens **only while contact tracking is switched on, and only after a post**. A "Turn on contact tracking" button sits at the top of the window. A whisper from a new player creates a contact and a lead; a whisper from an existing contact creates a lead on that contact. Tracking switches itself off 30 minutes after the last post (adjustable, 0 = never) and survives a reload.
+- Lead capture happens **only while contact tracking is switched on, and only after a post**. A "Turn on contact tracking" button sits at the top of the window. Posting from WoW CRM switches tracking on (an option). A whisper from a new player creates a contact and a lead; a whisper from an existing contact creates a lead on that contact. One conversation is one lead: a whisper joins the person's open lead, or their most recent lead if it was active in the last 12 hours, whatever post it answers. Whispers both ways are kept per contact (last 200) and shown on the lead. A lead becomes an order shell (quoted, item still to hand over, agreed price from the Products tab); the next trade with that person fills in the open order instead of starting another. Tracking switches itself off 30 minutes after the last post (adjustable, 0 = never) and survives a reload.
 - The chat limit is 255 **bytes**, not letters. The editor counts bytes; the probe has a button that tests this on the live client.
 - Saving: the game only writes add-on data at logout or interface reload, so after any meaningful change a "Save N changes" button appears; clicking it reloads the interface.
 - Publishing: github.com/CornFlakers, then CurseForge. No author line.
@@ -115,6 +115,8 @@ WoWCRM/
   Capture.lua       trade and mail detection, order prompt
   Mail.lua          templates, Send Mail pre-fill
   UI/*.lua          window and tabs
+  Sources.lua       where materials come from; what to craft first (pure logic, testable offline)
+  Reagents.lua      double-click materials in the game's profession window: open their recipe, Back, sources panel
   tests/            offline tests with a stubbed game API
 ```
 

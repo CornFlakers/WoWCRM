@@ -164,9 +164,28 @@ function M.RecordSend(post, target, now, zone)
 	local hour = U.Hour(now)
 	r.sendHours[hour] = (r.sendHours[hour] or 0) + 1
 	if cid then c.sendsByPost[post.id] = (c.sendsByPost[post.id] or 0) + 1 end
+	-- Posting switches tracking on (unless turned off in Options), so replies are never missed.
+	if not r.tracking.on and DB.settings.autoTrack ~= false then
+		r.tracking = { on = true, since = now }
+	end
 	if r.tracking.on then
 		r.tracking.post, r.tracking.postTime, r.tracking.campaign = post.id, now, cid
+		r.tracking.offer = nil
 	end
+end
+
+-- A bag offer placed in the chat box. You press Enter yourself, so it is not logged as a post,
+-- but it counts as one for contact tracking: whispers after it become leads tagged with the bag.
+-- Returns false when tracking is off and posting is set not to switch it on.
+function M.RecordOffer(name, now)
+	local r = R()
+	if not r.tracking.on then
+		if DB.settings.autoTrack == false then return false end
+		r.tracking = { on = true, since = now }
+	end
+	r.tracking.post, r.tracking.campaign = nil, nil
+	r.tracking.offer, r.tracking.postTime = name, now
+	return true
 end
 
 -- ---------------------------------------------------------------- one-button cycle
@@ -224,14 +243,15 @@ function M.SetTracking(on, now)
 	end
 end
 
--- Returns: on, capturing, minutesLeft
+-- Returns: on, capturing, minutesLeft, secondsLeft
 -- While a campaign is running, tracking stays on. Otherwise it switches itself off some
 -- time after the last post, so late replies to a finished campaign are still caught.
 function M.TrackingState(now)
 	local t = R().tracking
 	if not t.on then return false, false end
 	local c = M.ActiveCampaign(now)
-	if c then return true, t.post ~= nil, math.ceil((c.ends - now) / 60) end
+	local capturing = t.post ~= nil or t.offer ~= nil
+	if c then return true, capturing, math.ceil((c.ends - now) / 60), math.max(0, c.ends - now) end
 	local limit = DB.settings.trackAutoOff or 0
 	if limit > 0 then
 		local ref = t.postTime or t.since or now
@@ -239,9 +259,10 @@ function M.TrackingState(now)
 			R().tracking = { on = false }
 			return false, false
 		end
-		return true, t.post ~= nil, math.ceil((limit * 60 - (now - ref)) / 60)
+		local secs = limit * 60 - (now - ref)
+		return true, capturing, math.ceil(secs / 60), secs
 	end
-	return true, t.post ~= nil
+	return true, capturing
 end
 
 -- ---------------------------------------------------------------- contacts
@@ -343,6 +364,11 @@ function M.RepairSplitNames()
 			if (to.tags or "") == "" then to.tags = from.tags end
 			to.referredBy = to.referredBy or from.referredBy
 			to.sourcePost = to.sourcePost or from.sourcePost
+			if from.chat then
+				to.chat = to.chat or {}
+				for _, m in ipairs(from.chat) do to.chat[#to.chat + 1] = m end
+				table.sort(to.chat, function(a, b) return a.t < b.t end)
+			end
 		else
 			from.key = new
 			r.contacts[new] = from
@@ -400,28 +426,107 @@ end
 
 -- ---------------------------------------------------------------- leads
 
--- An incoming whisper. Returns lead, isNewContact; or nil when it is not captured.
-function M.OnWhisper(key, text, now)
-	local on, capturing = M.TrackingState(now)
-	if not on or not capturing then return nil end
-	local t = R().tracking
-	local existing = R().contacts[key]
-	if existing and existing.status == "ignored" then return nil end
+-- One conversation is one lead. A whisper joins the contact's open lead whatever post it was
+-- about, or their most recent lead when it was active within this many hours (so "on my way"
+-- after an order is made does not start a second lead).
+M.LEAD_GAP_HOURS = 12
+M.CHAT_KEEP = 200 -- whispers kept per contact
 
-	local c, isNew = M.EnsureContact(key, now, t.post)
+-- Keeps a whisper in the contact's conversation. mine = true for whispers I sent.
+function M.LogChat(key, mine, text, now)
+	local c = M.GetContact(key)
+	if not c then return end
+	c.chat = c.chat or {}
+	c.chat[#c.chat + 1] = { t = now, me = mine or nil, text = U.Shorten(tostring(text or ""), 255), char = mine and M.me or nil }
+	while #c.chat > M.CHAT_KEEP do table.remove(c.chat, 1) end
 	c.lastContact = now
-	for _, lead in ipairs(R().leads) do
-		if lead.contact == key and lead.status == "open" and lead.post == t.post then
-			lead.count = lead.count + 1
-			lead.time = now
-			if #lead.text < 500 then lead.text = lead.text .. " | " .. text end
-			return lead, false
+end
+
+-- The whispers belonging to a lead: from just before it started until the next lead began.
+function M.LeadChat(lead)
+	local c = M.GetContact(lead.contact)
+	if not c or not c.chat then return {} end
+	local from = (lead.started or lead.time) - 1800
+	local upto
+	for _, l in ipairs(R().leads) do
+		local s = l.started or l.time
+		if l.contact == lead.contact and l ~= lead and s > (lead.started or lead.time) and (not upto or s < upto) then upto = s end
+	end
+	local out = {}
+	for _, m in ipairs(c.chat) do
+		if m.t >= from and (not upto or m.t < upto) then out[#out + 1] = m end
+	end
+	return out
+end
+
+local function conversationLead(key, now)
+	local open, recent
+	for _, l in ipairs(R().leads) do
+		if l.contact == key then
+			if l.status == "open" and (not open or l.time > open.time) then open = l end
+			if not recent or l.time > recent.time then recent = l end
 		end
 	end
-	local lead = { id = M.NewId(), contact = key, post = t.post, campaign = t.campaign, sentAt = t.postTime,
-		text = text, time = now, status = "open", count = 1 }
+	if open then return open end
+	if recent and now - recent.time <= M.LEAD_GAP_HOURS * 3600 then return recent end
+end
+
+-- An incoming whisper. Returns lead, isNew (a new lead), isNewContact; or nil when it is not captured.
+-- Whispers from people already in your contacts are always kept in their conversation.
+function M.OnWhisper(key, text, now)
+	local existing = R().contacts[key]
+	if existing and existing.status == "ignored" then return nil end
+	local lead = conversationLead(key, now)
+	if lead then
+		M.LogChat(key, false, text, now)
+		lead.count = (lead.count or 0) + 1
+		lead.time = now
+		return lead, false, false
+	end
+	local on, capturing = M.TrackingState(now)
+	if not on or not capturing then
+		if existing then M.LogChat(key, false, text, now) end
+		return nil
+	end
+	local t = R().tracking
+	local _, isNewContact = M.EnsureContact(key, now, t.post)
+	M.LogChat(key, false, text, now)
+	lead = { id = M.NewId(), contact = key, post = t.post, offer = t.offer, campaign = t.campaign, sentAt = t.postTime,
+		text = U.Shorten(text, 255), time = now, started = now, status = "open", count = 1 }
 	table.insert(R().leads, lead)
-	return lead, isNew
+	return lead, true, isNewContact
+end
+
+-- A whisper I sent. Kept only for people already in my contacts.
+function M.OnWhisperSent(key, text, now)
+	if not M.GetContact(key) then return false end
+	M.LogChat(key, true, text, now)
+	return true
+end
+
+-- Earlier versions started a new lead for every post a person answered. Folds each person's
+-- open leads into their first one. Returns how many leads were folded away.
+function M.MergeDuplicateLeads()
+	local r, keep, folded = R(), {}, 0
+	for i = 1, #r.leads do
+		local l = r.leads[i]
+		if l.status == "open" then
+			local k = keep[l.contact]
+			if not k or l.id < k.id then keep[l.contact] = l end
+		end
+	end
+	for i = #r.leads, 1, -1 do
+		local l = r.leads[i]
+		local k = keep[l.contact]
+		if l.status == "open" and k and k ~= l then
+			k.count = (k.count or 1) + (l.count or 1)
+			k.time = math.max(k.time, l.time)
+			k.started = math.min(k.started or k.time, l.started or l.time)
+			table.remove(r.leads, i)
+			folded = folded + 1
+		end
+	end
+	return folded
 end
 
 function M.GetLead(id) return findById(R().leads, id) end
@@ -437,7 +542,10 @@ end
 --   received what the customer gave me in goods  { name, link, qty, value (copper each), kind }
 --            kind "mats"    = materials supplied for the job (not income)
 --            kind "payment" = goods given as payment or a tip (income, at their value)
---   price    gold received (or quoted)
+--   price    gold received
+--   quote    the agreed price, for an order started from a lead (optional)
+-- An item line marked planned = true is still to be handed over; a trade that hands it over
+-- turns it into a delivered line instead of adding a second one.
 
 function M.GetOrder(id) return findById(R().orders, id) end
 
@@ -461,6 +569,7 @@ local function cleanLines(lines, received)
 		local name = U.Trim(l.name)
 		if name ~= "" then
 			local line = { name = name, link = l.link, qty = math.max(1, math.floor(tonumber(l.qty) or 1)) }
+			if not received and l.planned then line.planned = true end
 			if received then
 				line.value = math.max(0, math.floor((tonumber(l.value) or 0) + 0.5))
 				line.kind = l.kind == "mats" and "mats" or "payment"
@@ -497,6 +606,15 @@ function M.OrderValue(o)
 	return o.price, goods, mats
 end
 
+-- Item lines handed over, and item lines still to hand over.
+function M.ItemCounts(o)
+	local done, planned = 0, 0
+	for _, l in ipairs(o.items or {}) do
+		if l.planned then planned = planned + 1 else done = done + 1 end
+	end
+	return done, planned
+end
+
 local function doneCount(key)
 	local done = 0
 	for _, o in ipairs(R().orders) do
@@ -531,11 +649,13 @@ local function setStatus(o, status, now)
 	o.status = status
 end
 
--- f: contact (key), type, desc (optional title), items, received, price (copper), status, notes
+-- f: contact (key), type, desc (optional title), items, received, price (copper), status, notes, quote
 function M.SaveOrder(id, f, now)
 	if not f.contact or f.contact == "" then return nil, "Choose a contact." end
 	local price = tonumber(f.price)
 	if not price or price < 0 then return nil, "The gold amount is not valid." end
+	local quote = tonumber(f.quote)
+	if quote and quote <= 0 then quote = nil end
 	local status = f.status or "quoted"
 	if not U.Contains(ns.ORDER_STATUS, status) then return nil, "Unknown order status." end
 	local otype = f.type or "crafted"
@@ -559,6 +679,9 @@ function M.SaveOrder(id, f, now)
 	o.contact, o.type, o.desc = f.contact, otype, desc
 	if isNew then attribute(o) end
 	o.items, o.received = items, received
+	if f.quote ~= nil then o.quote = quote and math.floor(quote + 0.5) or nil end
+	-- Marked paid with no gold entered: the agreed price is what was paid.
+	if status == "paid" and price == 0 and o.quote then price = o.quote end
 	o.price, o.notes, o.updated = math.floor(price + 0.5), f.notes or "", now
 	setStatus(o, status, now)
 
@@ -582,11 +705,18 @@ function M.OrdersFor(key)
 	return out
 end
 
--- The order a follow-up trade most likely belongs to: the contact's most recently
--- touched order that is not cancelled and was touched within the order window.
+-- The order a trade most likely belongs to: the contact's newest order that is still open
+-- (quoted or in progress), however old; otherwise their most recently touched order that is
+-- not cancelled and was touched within the order window.
 function M.CurrentOrder(key, now)
 	local window = (DB.settings.orderWindow or 60) * 60
 	local best
+	for _, o in ipairs(R().orders) do
+		if o.contact == key and (o.status == "quoted" or o.status == "in progress") then
+			if not best or (o.updated or o.created) >= (best.updated or best.created) then best = o end
+		end
+	end
+	if best then return best end
 	for _, o in ipairs(R().orders) do
 		if o.contact == key and o.status ~= "cancelled" and now - (o.updated or o.created) <= window then
 			if not best or (o.updated or o.created) >= (best.updated or best.created) then best = o end
@@ -597,7 +727,7 @@ end
 
 local function mergeLine(list, line)
 	for _, l in ipairs(list) do
-		if l.name == line.name and l.kind == line.kind and (l.value or 0) == (line.value or 0) then
+		if l.name == line.name and l.kind == line.kind and (l.value or 0) == (line.value or 0) and not l.planned == not line.planned then
 			l.qty = l.qty + line.qty
 			return
 		end
@@ -621,12 +751,24 @@ function M.AddTrade(id, key, trade, now)
 		table.insert(R().orders, o)
 		attribute(o)
 	end
-	local asPayment = #o.items > 0 or #given > 0
+	local asPayment = M.ItemCounts(o) > 0 or #given > 0
 	for _, l in ipairs(received) do
 		l.kind = asPayment and "payment" or "mats"
 		mergeLine(o.received, l)
 	end
-	for _, l in ipairs(given) do mergeLine(o.items, l) end
+	for _, l in ipairs(given) do
+		-- Handing over a planned item delivers it rather than adding another.
+		for i = #o.items, 1, -1 do
+			local p = o.items[i]
+			if p.planned and p.name == l.name then
+				local n = math.min(p.qty, l.qty)
+				p.qty = p.qty - n
+				if p.qty <= 0 then table.remove(o.items, i) end
+				break
+			end
+		end
+		mergeLine(o.items, l)
+	end
 	o.price = o.price + gold
 	o.trades = (o.trades or 0) + 1
 	o.updated = now
@@ -640,8 +782,11 @@ function M.AddTrade(id, key, trade, now)
 	end
 
 	local _, goods = M.OrderValue(o)
+	local done, planned = M.ItemCounts(o)
 	if o.status ~= "paid" then
-		if #o.items > 0 or o.type == "service" then
+		if planned > 0 then
+			setStatus(o, "in progress", now)
+		elseif done > 0 or o.type == "service" then
 			setStatus(o, (o.price + goods) > 0 and "paid" or "delivered", now)
 		else
 			setStatus(o, "in progress", now)
@@ -649,6 +794,39 @@ function M.AddTrade(id, key, trade, now)
 	end
 	closeLeads(key)
 	autoStatus(key)
+	return o
+end
+
+-- Products marked on the Products tab, with the price a customer is quoted: my price if set,
+-- otherwise priceOf(itemID) (the auction or vendor price). Sorted by name.
+function M.ProductChoices(priceOf)
+	local out = {}
+	for key, p in pairs(R().products) do
+		if type(p) == "table" and p.name then
+			local price = tonumber(p.price) or (priceOf and p.output and priceOf(p.output)) or 0
+			out[#out + 1] = { key = key, name = p.name, output = p.output, price = price, mine = p.price ~= nil }
+		end
+	end
+	table.sort(out, function(a, b) return a.name < b.name end)
+	return out
+end
+
+-- Turns a lead into an order shell: the item still to hand over, at the agreed price.
+-- product: { name, link, price } or nil for an empty order. Returns the order.
+function M.LeadToOrder(leadId, product, qty, now)
+	local lead = M.GetLead(leadId)
+	if not lead then return nil, "That lead no longer exists." end
+	qty = math.max(1, math.floor(tonumber(qty) or 1))
+	M.EnsureContact(lead.contact, now)
+	local o = { id = M.NewId(), created = now, updated = now, contact = lead.contact, type = "crafted", desc = "",
+		items = {}, received = {}, price = 0, notes = "", trades = 0, status = "quoted",
+		post = lead.post, campaign = lead.campaign, sentAt = lead.sentAt, lead = lead.id }
+	if product then
+		o.items[1] = { name = product.name, link = product.link, qty = qty, planned = true }
+		if (product.price or 0) > 0 then o.quote = product.price * qty end
+	end
+	table.insert(R().orders, o)
+	lead.status, lead.order = "won", o.id
 	return o
 end
 
@@ -709,11 +887,11 @@ function M.Stats()
 		-- what each post ended up selling (anything actually handed over)
 		if ps and o.status ~= "cancelled" and o.status ~= "quoted" then
 			for _, l in ipairs(o.items) do
-				if not ps.soldNames[l.name] then
+				if not l.planned and not ps.soldNames[l.name] then
 					ps.soldNames[l.name] = { name = l.name, qty = 0 }
 					ps.sold[#ps.sold + 1] = ps.soldNames[l.name]
 				end
-				ps.soldNames[l.name].qty = ps.soldNames[l.name].qty + l.qty
+				if not l.planned then ps.soldNames[l.name].qty = ps.soldNames[l.name].qty + l.qty end
 			end
 		end
 	end
@@ -889,11 +1067,11 @@ function M.CampaignReport(id)
 			end
 			if row and o.status ~= "quoted" then
 				for _, l in ipairs(o.items) do
-					if not row.soldNames[l.name] then
+					if not l.planned and not row.soldNames[l.name] then
 						row.soldNames[l.name] = { name = l.name, qty = 0 }
 						row.sold[#row.sold + 1] = row.soldNames[l.name]
 					end
-					row.soldNames[l.name].qty = row.soldNames[l.name].qty + l.qty
+					if not l.planned then row.soldNames[l.name].qty = row.soldNames[l.name].qty + l.qty end
 				end
 			end
 		end
@@ -907,7 +1085,9 @@ function M.SoldCounts()
 	local out = {}
 	for _, o in ipairs(R().orders) do
 		if o.status ~= "cancelled" and o.status ~= "quoted" then
-			for _, l in ipairs(o.items) do out[l.name] = (out[l.name] or 0) + l.qty end
+			for _, l in ipairs(o.items) do
+				if not l.planned then out[l.name] = (out[l.name] or 0) + l.qty end
+			end
 		end
 	end
 	return out
@@ -1080,8 +1260,8 @@ function M.Export()
 		line("C", k, c.status, c.tags, c.notes, c.firstSeen, c.lastContact, c.referredBy, src and src.name, c.outreach, c.lastOutreach)
 	end
 	for _, o in ipairs(r.orders) do
-		line("O", o.contact, o.type, o.desc, o.price, o.status, o.created, o.paidAt, o.notes)
-		for _, l in ipairs(o.items) do line("S", l.name, l.qty, l.link) end
+		line("O", o.contact, o.type, o.desc, o.price, o.status, o.created, o.paidAt, o.notes, o.quote)
+		for _, l in ipairs(o.items) do line("S", l.name, l.qty, l.link, l.planned and "planned" or nil) end
 		for _, l in ipairs(o.received) do line("R", l.name, l.qty, l.value, l.kind, l.link) end
 	end
 	return table.concat(out, "\n")
@@ -1147,12 +1327,12 @@ function M.Import(text, now)
 			else
 				pending = {
 					contact = f[2], type = f[3], desc = f[4], price = f[5], status = f[6],
-					created = tonumber(f[7]) or now, paidAt = tonumber(f[8]), notes = f[9],
+					created = tonumber(f[7]) or now, paidAt = tonumber(f[8]), notes = f[9], quote = tonumber(f[10]),
 					items = {}, received = {},
 				}
 			end
 		elseif kind == "S" and pending then
-			pending.items[#pending.items + 1] = { name = f[2], qty = f[3], link = blank(f[4]) }
+			pending.items[#pending.items + 1] = { name = f[2], qty = f[3], link = blank(f[4]), planned = f[5] == "planned" or nil }
 		elseif kind == "R" and pending then
 			pending.received[#pending.received + 1] = { name = f[2], qty = f[3], value = f[4], kind = f[5], link = blank(f[6]) }
 		end

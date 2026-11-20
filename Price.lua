@@ -156,3 +156,56 @@ function Price.RecipeSource(recipeID)
 	end
 	return known[recipeID]
 end
+
+-- ---------------------------------------------------------------- what vendors charge
+-- Thread and dye are bought from a vendor, so a bag offer charges what the vendor asks, not the
+-- auction price. Every vendor window you open is read and remembered. Until a price has been seen,
+-- four times what the vendor pays for the item stands in as an estimate.
+
+local function idOf(link)
+	return type(link) == "string" and tonumber(link:match("item:(%d+)")) or nil
+end
+
+local function readMerchant()
+	local prices = ns.DB.db and ns.DB.db.vendorPrices
+	local count = rawget(_G, "GetMerchantNumItems")
+	if not prices or not count then return end
+	local n = tonumber((select(2, pcall(count)))) or 0
+	for i = 1, n do
+		local okL, link = pcall(GetMerchantItemLink, i)
+		local id = okL and idOf(link)
+		local price, qty
+		local modern = C_MerchantFrame and C_MerchantFrame.GetItemInfo
+		if modern then
+			local ok, info = pcall(modern, i)
+			if ok and type(info) == "table" then price, qty = info.price, info.stackCount end
+		end
+		if not price and rawget(_G, "GetMerchantItemInfo") then
+			local ok, _, _, p, q = pcall(GetMerchantItemInfo, i)
+			if ok then price, qty = p, q end
+		end
+		price, qty = tonumber(price), math.max(1, tonumber(qty) or 1)
+		if id and price and price > 0 then prices[id] = math.floor(price / qty + 0.5) end
+	end
+end
+ns.On("MERCHANT_SHOW", readMerchant)
+ns.On("MERCHANT_UPDATE", readMerchant)
+
+-- Copper for one, and true when it is only an estimate.
+function Price.VendorPrice(itemID)
+	itemID = tonumber(itemID)
+	if not itemID then return nil end
+	local seen = ns.DB.db and ns.DB.db.vendorPrices and ns.DB.db.vendorPrices[itemID]
+	if seen then return seen, false end
+	local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+	if getInfo then
+		local ok, _, _, _, _, _, _, _, _, _, _, sell = pcall(getInfo, itemID)
+		if ok and tonumber(sell) and sell > 0 then return sell * 4, true end
+	end
+	return nil
+end
+
+function Price.IsVendorItem(itemID)
+	local prices = ns.DB.db and ns.DB.db.vendorPrices
+	return prices and prices[tonumber(itemID)] ~= nil or false
+end

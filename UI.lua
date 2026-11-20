@@ -417,18 +417,105 @@ end)
 
 -- ---------------------------------------------------------------- Leads
 
+-- A scrolling, read-only block of wrapped text.
+local function TextBox(parent, w, h)
+	local box = Box(parent, w, h, 0.7)
+	local sf = CreateFrame("ScrollFrame", nil, box, "UIPanelScrollFrameTemplate")
+	sf:SetPoint("TOPLEFT", 6, -6)
+	sf:SetPoint("BOTTOMRIGHT", -28, 6)
+	local content = CreateFrame("Frame", nil, sf)
+	content:SetSize(w - 40, 1)
+	sf:SetScrollChild(content)
+	local fs = Label(content, "", "GameFontHighlightSmall", w - 40)
+	fs:SetPoint("TOPLEFT")
+	function box:SetText(text, toEnd)
+		fs:SetText(text or "")
+		content:SetHeight(math.max(1, fs:GetStringHeight() + 4))
+		if toEnd and C_Timer then
+			C_Timer.After(0, function() sf:SetVerticalScroll(sf:GetVerticalScrollRange()) end)
+		else
+			sf:SetVerticalScroll(0)
+		end
+	end
+	return box
+end
+
 AddTab("Leads", function(p, tab)
 	local sel, showClosed = nil, false
-	local list = At(List(p, 340, 346, function(item) sel = item.id; tab.Refresh() end), p, 0, 0)
+	local list = At(List(p, 340, 346, function(item) sel = item.id; tab.HidePicker(); tab.Refresh() end), p, 0, 0)
 	local toggle = At(Button(p, "Show closed leads", 160), p, 0, -352)
 	local X = 354
 	local detail = At(Label(p, "", "GameFontHighlight", 410), p, X, -4)
+	local convo = At(TextBox(p, 410, 214), p, X, -62)
 
 	local function lead() return sel and M.GetLead(sel) end
+
+	-- Picking what the order is for: one of "my products" at its price, or an empty order.
+	local picker = CreateFrame("Frame", nil, p)
+	picker:SetPoint("TOPLEFT", p, "TOPLEFT", X, -62)
+	picker:SetSize(410, 280)
+	picker:SetFrameLevel(p:GetFrameLevel() + 10)
+	picker:Hide()
+	picker:EnableMouse(true)
+	local pickBg = picker:CreateTexture(nil, "BACKGROUND")
+	pickBg:SetAllPoints()
+	pickBg:SetColorTexture(0, 0, 0, 0.95)
+	local pickSel, choices = nil, {}
+	At(Label(picker, "What is this order for?", "GameFontNormal"), picker, 4, -2)
+	local pickList = At(List(picker, 410, 176, function(item) pickSel = item.id; tab.RefreshPicker() end), picker, 0, -20)
+	At(Label(picker, "Quantity", "GameFontHighlightSmall"), picker, 4, -204)
+	local pickQty = At(Edit(picker, 36), picker, 64, -200)
+	local pickInfo = At(Label(picker, "", "GameFontDisableSmall", 290), picker, 110, -204)
+	local function create(product)
+		local l = lead()
+		if not l then return end
+		local o, err = M.LeadToOrder(l.id, product, tonumber(pickQty:GetText()) or 1, U.Now())
+		if not o then UI.Msg(err, true) return end
+		picker:Hide()
+		ns.Changed()
+		UI.Show("Orders", o.id)
+		UI.Msg(product and ("Order started: " .. M.OrderTitle(o, 40) .. (o.quote and (" at " .. U.FormatMoney(o.quote)) or "")
+			.. ". Your next trade with them fills in this order.") or "Empty order started. Add what they are getting, then Save order.")
+	end
+	At(Button(picker, "Start order", 110, function()
+		local c = pickSel and choices[pickSel]
+		if not c then UI.Msg("Click a product first, or press Empty order.", true) return end
+		create({ name = c.name, link = c.output and Price.ItemLink(c.output), price = c.price })
+	end), picker, 0, -228)
+	At(Button(picker, "Empty order", 110, function() create(nil) end), picker, 116, -228)
+	At(Button(picker, "Cancel", 80, function() picker:Hide() end), picker, 232, -228)
+	At(Label(picker, "Mark products and set your prices on the Products tab.", "GameFontDisableSmall", 400), picker, 4, -256)
+
+	function tab.HidePicker() picker:Hide() end
+	function tab.RefreshPicker()
+		pickList:Set(choices, function(c)
+			return c.name, U.FormatMoney(c.price) .. (c.mine and "" or " |cff888888(market)|r")
+		end, pickSel)
+		local c = pickSel and choices[pickSel]
+		local n = math.max(1, math.floor(tonumber(pickQty:GetText()) or 1))
+		pickInfo:SetText(c and ("Agreed price: " .. U.FormatMoney(c.price * n)) or (#choices == 0 and "No products marked yet." or ""))
+	end
+	pickQty:SetScript("OnTextChanged", function() tab.RefreshPicker() end)
+
 	local buttons = {
 		At(Button(p, "Whisper back", 110, function() local l = lead(); if l then Chat.Whisper(l.contact) end end), p, X, -290),
 		At(Button(p, "Open contact", 110, function() local l = lead(); if l then UI.Show("Contacts", l.contact) end end), p, X + 114, -290),
-		At(Button(p, "New order", 110, function() local l = lead(); if l then UI.Show("Orders", { contact = l.contact }) end end), p, X + 228, -290),
+		At(Button(p, "Make it an order", 150, function()
+			local l = lead()
+			if not l then return end
+			if l.order and M.GetOrder(l.order) then UI.Show("Orders", l.order) return end
+			local open = M.CurrentOrder(l.contact, U.Now())
+			if open and (open.status == "quoted" or open.status == "in progress") then
+				UI.Show("Orders", open.id)
+				UI.Msg(Name(l.contact) .. " already has an open order; here it is.")
+				return
+			end
+			choices, pickSel = {}, nil
+			for i, c in ipairs(M.ProductChoices(Price.GetByID)) do c.id = i; choices[i] = c end
+			SetEdit(pickQty, "1")
+			picker:Show()
+			tab.RefreshPicker()
+		end), p, X + 228, -290),
 		At(Button(p, "Dismiss", 110, function()
 			local l = lead()
 			if l then M.SetLeadStatus(l.id, "dismissed"); sel = nil; ns.Changed() end
@@ -463,7 +550,37 @@ AddTab("Leads", function(p, tab)
 		tab.Refresh()
 	end)
 
-	function tab.Select(id) sel = id; tab.Refresh() end
+	-- The conversation: the post they answered, then every whisper both ways.
+	local function thread(l)
+		local L = {}
+		local them = U.Shorten((U.SplitKey(l.contact)), 20)
+		local post = l.post and M.GetPost(l.post)
+		if l.sentAt and l.offer and not l.post then
+			L[#L + 1] = ("|cff888888%s  You offered a %s|r"):format(When(l.sentAt), l.offer)
+		elseif l.sentAt then
+			L[#L + 1] = ("|cff888888%s  You posted \"%s\"|r"):format(When(l.sentAt), post and post.name or "a post since deleted")
+		end
+		local msgs = M.LeadChat(l)
+		if #msgs == 0 then
+			L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(When(l.started or l.time), them, l.text or "")
+		end
+		local lastDay
+		for _, m in ipairs(msgs) do
+			local day = date("%b %d", m.t)
+			local stamp = day == lastDay and date("%H:%M", m.t) or (day .. " " .. date("%H:%M", m.t))
+			lastDay = day
+			if m.me then
+				local who = U.Shorten((U.SplitKey(m.char or M.me or "You")), 20)
+				L[#L + 1] = ("|cff888888%s|r  |cff80c0ff%s:|r %s"):format(stamp, who, m.text)
+			else
+				L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(stamp, them, m.text)
+			end
+		end
+		return table.concat(L, "\n")
+	end
+
+	local shownFor, shownCount
+	function tab.Select(id) sel = id; picker:Hide(); tab.Refresh() end
 	function tab.Refresh()
 		local items = {}
 		for i = #DB.R.leads, 1, -1 do
@@ -473,21 +590,33 @@ AddTab("Leads", function(p, tab)
 		table.sort(items, function(a, b) return a.time > b.time end)
 		list:Set(items, function(l)
 			local mark = l.status == "open" and "" or ("[" .. l.status .. "] ")
-			return mark .. Name(l.contact) .. ": " .. U.Shorten(l.text, 60), When(l.time)
+			local n = (l.count or 1) > 1 and ("  |cff888888(" .. l.count .. ")|r") or ""
+			return mark .. Name(l.contact) .. ": " .. U.Shorten(l.text, 50) .. n, When(l.time)
 		end, sel)
 		local l = lead()
 		for _, b in ipairs(buttons) do if l then b:Enable() else b:Disable() end end
 		if not l then
 			local on, capturing = M.TrackingState(U.Now())
+			convo:Hide()
+			shownFor = nil
 			detail:SetText(#items > 0 and "Select a lead." or (on and capturing) and "Tracking is on. Whispers will appear here."
 				or on and "Tracking is on. Make a post and whispers will appear here."
-				or "No leads yet.\n\nTurn on contact tracking (top of this window), then make a post.\nAnyone who whispers you is captured here and added to your contacts.")
+				or "No leads yet.\n\nPost from the quick-post bar or the Posts tab; tracking switches on by itself.\nAnyone who whispers you is captured here and added to your contacts.")
 			return
 		end
+		convo:Show()
 		local c = M.GetContact(l.contact)
-		local post = l.post and M.GetPost(l.post)
-		detail:SetText(("|cffffd100%s|r  (%s)\nPost: %s\nLast message: %s   Messages: %d\nLead status: %s\n\n%s"):format(
-			Name(l.contact), c and c.status or "?", post and post.name or "(deleted post)", When(l.time), l.count, l.status, l.text))
+		local order = l.order and M.GetOrder(l.order)
+		local buy = M.PurchaseSummary(l.contact)
+		detail:SetText(("|cffffd100%s|r  (%s)   Lead: %s\nMessages: %d   Last: %s\n%s"):format(
+			Name(l.contact), c and c.status or "?", l.status, l.count or 1, When(l.time),
+			order and ("Order: " .. M.OrderTitle(order, 40) .. " - " .. order.status)
+			or (buy.orders > 0 and ("Earlier orders: " .. buy.orders .. ", lifetime " .. U.FormatMoney(buy.value)) or "No orders yet.")))
+		local n = c and c.chat and #c.chat or 0
+		if shownFor ~= l.id or shownCount ~= n then
+			convo:SetText(thread(l), true)
+			shownFor, shownCount = l.id, n
+		end
 	end
 end)
 
@@ -627,7 +756,7 @@ end)
 local function copyLines(lines)
 	local out = {}
 	for i, l in ipairs(lines or {}) do
-		out[i] = { name = l.name, link = l.link, qty = l.qty, value = l.value, kind = l.kind, source = l.source }
+		out[i] = { name = l.name, link = l.link, qty = l.qty, value = l.value, kind = l.kind, source = l.source, planned = l.planned }
 	end
 	return out
 end
@@ -672,7 +801,9 @@ AddTab("Orders", function(p, tab)
 	At(Label(p, "Status"), p, X + 180, -30)
 	local status = At(Cycle(p, ns.ORDER_STATUS, 120), p, X + 230, -26)
 	At(Label(p, "Title"), p, X, -56)
-	local desc = At(Edit(p, 400), p, X + 62, -52)
+	local desc = At(Edit(p, 230), p, X + 62, -52)
+	At(Label(p, "Agreed"), p, X + 304, -56)
+	local quote = At(Edit(p, 110), p, X + 362, -52)
 	At(Label(p, "Notes"), p, X, -80)
 	local notes = At(Edit(p, 400), p, X + 62, -76)
 
@@ -708,16 +839,23 @@ AddTab("Orders", function(p, tab)
 		tab.Refresh()
 	end
 
-	At(Button(p, "Add", 60, function()
+	At(Button(p, "Add", 44, function()
 		local line = readLine(sQty, sName)
 		if not line then UI.Msg("Type an item name, or shift-click an item into the box.", true) return end
 		sold[#sold + 1] = line
 		SetEdit(sQty, "1"); SetEdit(sName, "")
 		touched()
-	end), p, X + 306, -197)
-	At(Button(p, "Remove", 80, function()
+	end), p, X + 300, -197)
+	At(Button(p, "Remove", 62, function()
 		if selSold and sold[selSold] then table.remove(sold, selSold); selSold = nil; touched() end
-	end), p, X + 370, -197)
+	end), p, X + 346, -197)
+	-- Switch a line between "still to hand over" and "handed over" (e.g. when it went by mail).
+	At(Button(p, "Given", 62, function()
+		local l = selSold and sold[selSold]
+		if not l then UI.Msg("Click a line in the list first.", true) return end
+		l.planned = not l.planned or nil
+		touched()
+	end), p, X + 410, -197)
 
 	local function addReceived(kind)
 		local line, err = readLine(rQty, rName, rValue)
@@ -756,6 +894,7 @@ AddTab("Orders", function(p, tab)
 		SetEdit(contact, o and Name(o.contact) or (draft.contact and Name(draft.contact)))
 		otype:Set(o and o.type)
 		SetEdit(desc, o and o.desc)
+		SetEdit(quote, o and o.quote and U.FormatMoney(o.quote) or "")
 		SetEdit(price, o and U.FormatMoney(o.price))
 		status:Set(o and o.status)
 		SetEdit(notes, o and o.notes)
@@ -769,9 +908,11 @@ AddTab("Orders", function(p, tab)
 		local key = c and c.key or U.NormName(ctext, DB.realm, true)
 		local copper = U.ParseMoney(price:GetText())
 		if not copper then UI.Msg("Gold amount not understood. Use a form like 12g 50s.", true) return end
+		local agreed = U.ParseMoney(quote:GetText())
+		if not agreed then UI.Msg("Agreed price not understood. Use a form like 1g 90s.", true) return end
 		local o, err = M.SaveOrder(sel, {
 			contact = key, type = otype.value, desc = desc:GetText(), items = sold, received = recv,
-			price = copper, status = forceStatus or status.value, notes = notes:GetText(),
+			price = copper, status = forceStatus or status.value, notes = notes:GetText(), quote = agreed,
 		}, U.Now())
 		if not o then UI.Msg(err, true) return end
 		load(o)
@@ -800,12 +941,17 @@ AddTab("Orders", function(p, tab)
 		table.sort(items, function(a, b) if a.created ~= b.created then return a.created > b.created end return a.id > b.id end)
 		list:Set(items, function(o)
 			local gold, goods = M.OrderValue(o)
-			return Name(o.contact) .. ": " .. M.OrderTitle(o, 30), U.FormatMoney(gold + goods) .. "  " .. o.status
+			local value = (gold + goods == 0 and o.quote) and ("|cff888888" .. U.FormatMoney(o.quote) .. "|r") or U.FormatMoney(gold + goods)
+			return Name(o.contact) .. ": " .. M.OrderTitle(o, 30), value .. "  " .. o.status
 		end, sel)
 
 		local rows = {}
 		for i, l in ipairs(sold) do rows[i] = { id = i, line = l } end
-		soldList:Set(rows, function(r) return r.line.qty .. "x " .. (r.line.link or r.line.name) end, selSold)
+		local planned = 0
+		for _, l in ipairs(sold) do if l.planned then planned = planned + 1 end end
+		soldList:Set(rows, function(r)
+			return r.line.qty .. "x " .. (r.line.link or r.line.name), r.line.planned and "|cffffd100to hand over|r" or "given"
+		end, selSold)
 		rows = {}
 		local goods, mats = 0, 0
 		for i, l in ipairs(recv) do
@@ -823,8 +969,10 @@ AddTab("Orders", function(p, tab)
 		local o = sel and M.GetOrder(sel)
 		summary:SetText(("Income: |cffffd100%s|r gold + |cffffd100%s|r in goods = |cffffd100%s|r      Materials supplied: %s\n%s"):format(
 			U.FormatMoney(gold), U.FormatMoney(goods), U.FormatMoney(gold + goods), U.FormatMoney(mats),
-			o and ("Created " .. When(o.created) .. "    Paid " .. When(o.paidAt) .. "    Trades recorded: " .. (o.trades or 0)
-				.. "    Counts towards lifetime value only when paid.")
+			o and ((o.quote and ("Agreed " .. U.FormatMoney(o.quote) .. "    ") or "")
+				.. (planned > 0 and (planned .. " still to hand over    ") or "")
+				.. "Created " .. When(o.created) .. "    Paid " .. When(o.paidAt) .. "    Trades: " .. (o.trades or 0)
+				.. "\nYour next trade with them fills in this order. It counts towards lifetime value once paid.")
 			or "New order. Completed trades offer to fill this in for you."))
 	end
 	load(nil)
@@ -1051,7 +1199,19 @@ end)
 -- Recipes come from Mastercraft's own scan of your professions; prices from TradeSkillMaster,
 -- Auctionator or the vendor. This tab only reads that data.
 
-AddTab("Products", function(p, tab)
+AddTab("Products", function(page, tab)
+	-- Two views share the tab: the full recipe catalog, and the bag offers for players met out in
+	-- the world. The catalog's widgets all live on their own frame so one switch hides them.
+	local p = CreateFrame("Frame", nil, page)
+	p:SetAllPoints(page)
+	local of = CreateFrame("Frame", nil, page)
+	of:SetAllPoints(page)
+	local catalogRefresh, offersRefresh
+	At(Button(p, "Bag offers", 120, function()
+		DB.settings.productsView = "offers"
+		tab.Refresh()
+	end), p, 652, 0)
+
 	local sel
 	local prof = At(DynCycle(p, 130, function() sel = nil; tab.Refresh() end), p, 0, 0)
 	local cat = At(DynCycle(p, 170, function() tab.Refresh() end), p, 134, 0)
@@ -1203,7 +1363,7 @@ AddTab("Products", function(p, tab)
 		return out
 	end
 
-	function tab.Refresh()
+	catalogRefresh = function()
 		current = nil
 		local src = source()
 		local profs = {}
@@ -1285,6 +1445,190 @@ AddTab("Products", function(p, tab)
 			current.price > 0 and ((current.margin < 0 and "-" or "") .. U.FormatMoney(math.abs(current.margin))) or "?",
 			DB.settings.heldFree and "after what you hold" or "at full mats price", current.sold)
 		detail:SetText(table.concat(L, "\n"))
+	end
+
+	-- ------------------------------------------------ bag offers
+	-- Pick a bag, press Post: the offer goes into the chat box for you to read, change and send.
+	local O = ns.Offers
+	local offerSel
+	At(Label(of, "Bag offers: they bring the cloth, you make it on the spot", "GameFontNormal", 520), of, 4, -4)
+	At(Button(of, "All recipes", 120, function()
+		DB.settings.productsView = "catalog"
+		tab.Refresh()
+	end), of, 652, 0)
+	local who = At(Label(of, "", "GameFontHighlightSmall", 640), of, 4, -26)
+	local offerList = At(List(of, 776, 200, function(item)
+		offerSel = item.id
+		tab.Refresh()
+	end), of, 0, -44)
+	local offerDetail = At(Label(of, "", "GameFontHighlightSmall", 770), of, 4, -252)
+
+	At(Label(of, "Message", "GameFontHighlightSmall"), of, 4, -351)
+	local offerText = At(Edit(of, 560), of, 60, -346)
+	offerText:SetScript("OnTextChanged", function(self, userInput)
+		if not userInput then return end
+		local t = U.Trim(self:GetText())
+		DB.settings.offerText = (t == O.DEFAULT_TEXT) and "" or t
+		if offersRefresh then offersRefresh(true) end
+	end)
+	At(Button(of, "Default wording", 130, function()
+		DB.settings.offerText = ""
+		tab.Refresh()
+	end), of, 640, -345)
+	At(Label(of, "Words in braces are filled in: {recipe} {item} {size} {mats} {fee} {vendor}", "GameFontDisableSmall", 600), of, 60, -370)
+	At(Label(of, "Tip %", "GameFontHighlightSmall"), of, 4, -395)
+	local tipBox = At(Edit(of, 40), of, 60, -390)
+	tipBox:SetScript("OnTextChanged", function(self, userInput)
+		if not userInput then return end
+		DB.settings.offerTip = math.max(0, tonumber(self:GetText()) or 0)
+		if offersRefresh then offersRefresh(true) end
+	end)
+	At(Label(of, "added on top of what thread and dye cost at the vendor, rounded up to a silver", "GameFontDisableSmall", 500), of, 110, -395)
+
+	-- The profession that makes the bags: whichever scanned list holds the first of them, else Tailoring.
+	local function profession()
+		local src, fallback = source(), nil
+		for k, v in pairs(src or {}) do
+			if type(v) == "table" and type(v.list) == "table" then
+				for _, r in ipairs(v.list) do
+					if type(r) == "table" and r.name == O.BAGS[1].name then return k, v.list end
+				end
+				if k == "Tailoring" then fallback = k end
+			end
+		end
+		if fallback then return fallback, src[fallback].list end
+	end
+
+	-- Who you are talking to: your target, when it is another player.
+	local function targetInfo()
+		if not (UnitExists and UnitExists("target") and UnitIsPlayer and UnitIsPlayer("target")) then return nil end
+		local name = UnitName("target")
+		if type(name) ~= "string" then return nil end
+		local lvl = UnitLevel and tonumber(UnitLevel("target"))
+		return name, (lvl and lvl > 0) and lvl or nil
+	end
+
+	-- Ask the game to load an item, so its name and link are ready by the next refresh.
+	local function load(id)
+		local req = C_Item and C_Item.RequestLoadItemDataByID
+		if req and id then pcall(req, id) end
+	end
+
+	local function recipeLink(row)
+		local get = C_TradeSkillUI and C_TradeSkillUI.GetRecipeLink
+		if get and type(row.id) == "number" then
+			local ok, link = pcall(get, row.id)
+			if ok and type(link) == "string" and link ~= "" then return link end
+		end
+	end
+
+	local currentOffer, offerProf
+	local function buildOfferText(row)
+		return O.Text(row, {
+			template = DB.settings.offerText, profession = offerProf,
+			recipeLink = recipeLink(row), itemLink = row.output and Price.ItemLink(row.output),
+		})
+	end
+
+	local post = At(Button(of, "Post to chat box", 200, function()
+		if not currentOffer then UI.Msg("Click a bag first.", true) return end
+		local text, err = buildOfferText(currentOffer)
+		if not text then UI.Msg(err, true) return end
+		local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+		if not open then UI.Msg("The chat box could not be opened.", true) return end
+		open(text)
+		local tracking = M.RecordOffer(currentOffer.name, U.Now())
+		ns.Changed(true)
+		UI.Msg("Offer for " .. currentOffer.name .. " is in the chat box, on your current chat channel. Change anything, then press Enter."
+			.. (tracking and " Whispers now become leads." or ""))
+	end), of, 4, -420)
+	post:SetHeight(26)
+	At(Label(of, "Nothing is sent until you press Enter. Switch channel in the box with /s, /y or /1 if you like.", "GameFontDisableSmall", 550), of, 214, -427)
+
+	offersRefresh = function(textOnly)
+		local profName, list = profession()
+		offerProf = profName
+		if not textOnly then
+			SetEdit(offerText, U.Trim(DB.settings.offerText) ~= "" and DB.settings.offerText or O.DEFAULT_TEXT)
+			SetEdit(tipBox, tostring(DB.settings.offerTip or 0))
+		end
+		local tName, tLevel = targetInfo()
+		if not list then
+			offerList:Set({}, function() end)
+			currentOffer = nil
+			post:Disable()
+			who:SetText("")
+			offerDetail:SetText("No Tailoring recipe list found for this character.\n\nOffers read the recipes that the Mastercraft add-on scans. Install and enable Mastercraft,\nopen your Tailoring window once so it can scan, then come back here.")
+			return
+		end
+		local extra = {}
+		for _, v in pairs(DB.R.products) do
+			if type(v) == "table" and v.profession == profName and type(v.name) == "string" and v.name:lower():find("bag", 1, true) then
+				extra[v.name] = true
+			end
+		end
+		local rows, missing = O.Build(list, {
+			nameOf = Price.ItemName, vendorPrice = Price.VendorPrice, isVendor = Price.IsVendorItem,
+			tip = DB.settings.offerTip, slotsOf = Price.BagSlots, extra = extra, level = tLevel,
+		})
+		currentOffer = nil
+		for _, r in ipairs(rows) do
+			load(r.output)
+			for _, g in ipairs(r.bring) do load(g.itemID) end
+			for _, g in ipairs(r.vendor) do load(g.itemID) end
+			if r.id == offerSel then currentOffer = r end
+		end
+		if tName then
+			local fits = {}
+			for _, r in ipairs(rows) do if r.fits and r.learned then fits[#fits + 1] = r.name end end
+			who:SetText(("Target: |cffffd100%s|r%s%s"):format(tName, tLevel and (", level " .. tLevel) or "",
+				#fits > 0 and ("   |cff40ff40suits: " .. table.concat(fits, ", ") .. "|r") or ""))
+		else
+			who:SetText("Target a player to see which bags suit their level.")
+		end
+		offerList:Set(rows, function(r)
+			local left = (r.fits and "|cff40ff40>|r " or "  ") .. r.name .. (r.slots and ("  |cff80c0ff" .. r.slots .. " slot|r") or "")
+				.. (r.min and ("  |cff888888level " .. r.min .. "-" .. r.max .. "|r") or "")
+				.. (r.learned and "" or "  |cffff6060not learned|r")
+			local right = "bring " .. (#r.bring > 0 and O.MatsText(r.bring) or "nothing") .. "    fee "
+				.. (r.fee > 0 and U.FormatMoney(r.fee) or "?") .. ((r.estimated or r.unpriced > 0) and "*" or "")
+			return left, right
+		end, offerSel)
+		if not currentOffer then
+			post:Disable()
+			offerDetail:SetText((#rows == 0 and "None of the usual bags are in your recipe list yet." or "Click a bag, then Post to chat box.")
+				.. (#missing > 0 and ("\n\n|cff888888Not in your recipe list: " .. table.concat(missing, ", ") .. "|r") or "")
+				.. "\n\n|cff888888Bags you mark as products on the recipe list are offered here too.|r")
+			return
+		end
+		post:Enable()
+		local r = currentOffer
+		local L = { ("|cffffd100%s|r%s%s"):format(r.name, r.slots and ("  (" .. r.slots .. " slot)") or "",
+			r.learned and "" or "   |cffff6060You have not learned this recipe.|r") }
+		L[#L + 1] = "They bring: " .. (#r.bring > 0 and O.MatsText(r.bring) or "nothing")
+		local vend = {}
+		for _, g in ipairs(r.vendor) do
+			vend[#vend + 1] = ("%d %s at %s"):format(g.qty, g.name, g.each > 0 and U.FormatMoney(g.each) or "?")
+		end
+		L[#L + 1] = "You buy: " .. (#vend > 0 and table.concat(vend, ", ") or "nothing") .. "  = " .. U.FormatMoney(r.vendorCost)
+			.. "    plus " .. (DB.settings.offerTip or 0) .. "% tip = |cffffd100" .. (r.fee > 0 and U.FormatMoney(r.fee) or "no fee") .. "|r"
+		if r.estimated or r.unpriced > 0 then
+			L[#L + 1] = "|cff888888* Vendor prices are estimates until you open a trade supplies vendor once; WoW CRM remembers what it charges.|r"
+		end
+		local text, err = buildOfferText(r)
+		L[#L + 1] = " "
+		L[#L + 1] = text and ("Preview (" .. U.ByteLen(text) .. " of " .. ns.MAX_CHAT_BYTES .. " bytes):\n" .. text) or ("|cffff6060" .. err .. "|r")
+		offerDetail:SetText(table.concat(L, "\n"))
+	end
+
+	function tab.Refresh()
+		if DB.settings.productsView == "offers" then
+			p:Hide(); of:Show()
+			offersRefresh()
+		else
+			of:Hide(); p:Show()
+			catalogRefresh()
+		end
 	end
 end)
 
@@ -1408,6 +1752,7 @@ AddTab("Options", function(outer, tab)
 	number("postInterval", "Usual wait between posts to the same channel during a campaign, in minutes", 1)
 	check("campaignSound", "Play a sound when the next campaign post is due")
 	header("Leads and orders")
+	check("autoTrack", "Posting from WoW CRM switches contact tracking on")
 	number("trackAutoOff", "Contact tracking turns off this many minutes after your last post (0 = never)", 0)
 	number("orderWindow", "A follow-up trade joins the same order for this many minutes", 1)
 	check("promptStrangers", "Offer to record sales to people who are not contacts yet")
@@ -1586,7 +1931,7 @@ local function refreshHeader()
 		local t = DB.R.tracking
 		local post = t.post and M.GetPost(t.post)
 		local tail = left and ("  (" .. left .. " min left)") or ""
-		main.trackInfo:SetText(capturing and ("|cff40ff40Capturing whispers|r for: " .. (post and post.name or "your last post") .. tail)
+		main.trackInfo:SetText(capturing and ("|cff40ff40Capturing whispers|r for: " .. (post and post.name or (t.offer and (t.offer .. " offer")) or "your last post") .. tail)
 			or "|cffffff00Waiting for your first post.|r Whispers are captured after you post." .. tail)
 	end
 	if ns.unsaved > 0 then
@@ -1708,13 +2053,26 @@ end
 -- ---------------------------------------------------------------- quick-post bar
 
 local BAR_MAX = 10
-local BAR_TOP = 168 -- where the post buttons start
+local BAR_TOP = 220 -- where the post buttons start
 
 local function refreshBar()
 	if not bar or not bar:IsShown() then return end
 	local posts, now = M.PostsFor(), U.Now()
 
 	bar.title:SetText("WoW CRM posts for " .. U.Shorten((U.SplitKey(M.me or "")), 18))
+
+	-- Contact tracking, with the time left before it switches itself off.
+	local on, capturing, _, secs = M.TrackingState(now)
+	if not on then
+		bar.track:SetText(DB.settings.autoTrack ~= false and "Tracking off - posting turns it on" or "Start tracking whispers")
+		bar.track.light:SetColorTexture(0.5, 0.5, 0.5)
+	elseif not capturing then
+		bar.track:SetText("Tracking on - post to start capturing" .. (secs and ("  " .. M.Clock(secs)) or ""))
+		bar.track.light:SetColorTexture(1, 0.8, 0)
+	else
+		bar.track:SetText("Capturing whispers" .. (secs and ("  " .. M.Clock(secs) .. " left") or ""))
+		bar.track.light:SetColorTexture(0.2, 1, 0.2)
+	end
 
 	-- The one-button cycle.
 	local chans = DB.settings.cycleChannels
@@ -1782,33 +2140,57 @@ local function buildBar()
 	close:SetPoint("TOPRIGHT", 2, 2)
 	close:SetScript("OnClick", function() UI.ToggleBar() end)
 
+	-- Into the window: where you left it, or straight to the bag offers.
+	At(Button(bar, "Open WoW CRM", 128, function() UI.Show() end), bar, 10, -26)
+	At(Button(bar, "Products", 128, function()
+		DB.settings.productsView = "offers"
+		UI.Show("Products")
+	end), bar, 142, -26)
+
+	bar.track = At(Button(bar, "", 260, function()
+		local on = M.TrackingState(U.Now())
+		ns.SetTracking(not on)
+		refreshBar()
+	end), bar, 10, -52)
+	bar.track.light = bar.track:CreateTexture(nil, "OVERLAY")
+	bar.track.light:SetSize(8, 8)
+	bar.track.light:SetPoint("LEFT", 8, 0)
+	bar.track:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Contact tracking")
+		GameTooltip:AddLine("While it is on, anyone who whispers you after a post becomes a lead.", 1, 1, 1, true)
+		GameTooltip:AddLine("It turns off by itself after the time shown (set on the Options tab). Click to turn it on or off.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	bar.track:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	bar.cycle = At(Button(bar, "", 260, function()
 		local ok, res = Chat.CycleSend(DB.settings.cycleChannels)
 		if not ok then ns.Print(res) end
 		refreshBar()
-	end), bar, 10, -26)
+	end), bar, 10, -78)
 	bar.cycle:SetHeight(30)
-	bar.cycleInfo = At(Label(bar, "", "GameFontDisableSmall", 260), bar, 10, -60)
+	bar.cycleInfo = At(Label(bar, "", "GameFontDisableSmall", 260), bar, 10, -112)
 	bar.chanChecks = {}
 	for i, t in ipairs(ns.CYCLE_CHANNELS) do
-		local cb = At(Check(bar, ns.TARGET_LABEL[t]), bar, 8 + (i - 1) * 86, -74)
+		local cb = At(Check(bar, ns.TARGET_LABEL[t]), bar, 8 + (i - 1) * 86, -126)
 		cb:SetScript("OnClick", function(self)
 			DB.settings.cycleChannels[t] = self:GetChecked() and true or false
 			refreshBar()
 		end)
 		bar.chanChecks[t] = cb
 	end
-	At(Label(bar, "Or pick a channel, then the post to send there:", "GameFontDisableSmall", 260), bar, 10, -104)
+	At(Label(bar, "Or pick a channel, then the post to send there:", "GameFontDisableSmall", 260), bar, 10, -156)
 	bar.chanButtons = {}
 	local short = { SAY = "Say", YELL = "Yell", GENERAL = "Gen", TRADE = "Trade", PARTY = "Party", GUILD = "Guild" }
 	for i, t in ipairs(ns.TARGETS) do
 		local b = At(Button(bar, short[t], 42, function()
 			DB.settings.barChannel = t
 			refreshBar()
-		end), bar, 10 + (i - 1) * 43, -120)
+		end), bar, 10 + (i - 1) * 43, -172)
 		bar.chanButtons[t] = b
 	end
-	bar.chanInfo = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -148)
+	bar.chanInfo = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -200)
 
 	bar.empty = At(Label(bar, "", "GameFontHighlightSmall", 260), bar, 10, -BAR_TOP)
 	bar.buttons = {}
@@ -2180,6 +2562,11 @@ end)
 -- Keep "craftable now" current as your bags change.
 ns.On("BAG_UPDATE_DELAYED", function()
 	if ns.ready and current == "Products" then UI.Refresh() end
+end)
+
+-- The bag offers show which bags suit the player you target.
+ns.On("PLAYER_TARGET_CHANGED", function()
+	if ns.ready and current == "Products" and DB.settings.productsView == "offers" then UI.Refresh() end
 end)
 
 ns.On("PLAYER_LOGIN", function()

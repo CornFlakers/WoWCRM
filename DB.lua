@@ -8,6 +8,7 @@ DB.VERSION = 2
 local DEFAULTS = {
 	minGap = 60,          -- seconds between two sends to the same public channel
 	trackAutoOff = 30,    -- minutes after the last post before tracking switches itself off (0 = never)
+	autoTrack = true,     -- posting from WoW CRM switches contact tracking on
 	heldFree = true,      -- materials already held count as costing nothing
 	barChannel = "TRADE", -- the channel picked on the quick-post bar
 	publicSpacing = 2,    -- minutes between any two posts to Say, Yell, General or Trade (0 = off)
@@ -28,6 +29,10 @@ local DEFAULTS = {
 	orderWindow = 60,     -- minutes during which a follow-up trade is offered as part of the same order
 	generalName = "General",
 	tradeName = "Trade",
+	reagentHelp = true,   -- double-click a material in the profession window: its recipe, or where to get it
+	productsView = "catalog", -- the Products tab shows the full recipe list ("catalog") or the bag offers ("offers")
+	offerText = "",       -- the bag offer line; empty uses the built-in wording (ns.Offers.DEFAULT_TEXT)
+	offerTip = 20,        -- percent added on top of thread and dye in a bag offer
 }
 DB.MIN_GAP_FLOOR = 30
 
@@ -65,6 +70,10 @@ function DB.Init(saved, realm)
 	if type(saved.settings.invSources) ~= "table" then saved.settings.invSources = { bags = true } end
 	if type(saved.settings.cycleChannels) ~= "table" then saved.settings.cycleChannels = { GENERAL = true, TRADE = true } end
 	if saved.settings.minGap < DB.MIN_GAP_FLOOR then saved.settings.minGap = DB.MIN_GAP_FLOOR end
+
+	-- What vendors charge for things (thread, dye), learned whenever a vendor window is open.
+	-- Kept for the whole account: vendor prices are the same on every realm.
+	if type(saved.vendorPrices) ~= "table" then saved.vendorPrices = {} end
 
 	saved.realms = saved.realms or {}
 	local R = saved.realms[realm] or {}

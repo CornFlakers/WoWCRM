@@ -1038,10 +1038,10 @@ do
 	eq(all > 1, true, "All lists every open lead again")
 end
 
--- Pipeline: write down what someone needs (an alt too), work it, win it into an order
+-- Opty: write down what someone needs (an alt too), work it, win it into an order
 do
-	UI.Show("Pipeline")
-	local pipe = UI.tabs.Pipeline.panel
+	UI.Show("Opty")
+	local pipe = UI.tabs.Opty.panel
 	local edits = kind("EditBox", pipe) -- for, needs, quote, days, next step, notes
 	click("Me", pipe)
 	eq(edits[1]:GetText(), "Seller", "Me fills in the character you are playing")
@@ -1076,7 +1076,7 @@ do
 	end
 	leadRow._scripts.OnClick(leadRow)
 	click("Opportunity", leadsPanel)
-	eq(UI.tabs.Pipeline.panel._shown, true, "a lead opens as an opportunity")
+	eq(UI.tabs.Opty.panel._shown, true, "a lead opens as an opportunity")
 	local fromLead
 	for _, o in ipairs(DB.R.opportunities) do if o.lead == leadRow.item.id then fromLead = o end end
 	eq(fromLead ~= nil, true, "with the lead remembered")
@@ -1084,7 +1084,7 @@ do
 	-- from a contact
 	UI.Show("Contacts", "Skotor Ironmark-Stormrage")
 	click("+ Opportunity", UI.tabs.Contacts.panel)
-	eq(kind("EditBox", UI.tabs.Pipeline.panel)[1]:GetText(), "Skotor Ironmark", "a contact starts an opportunity for them")
+	eq(kind("EditBox", UI.tabs.Opty.panel)[1]:GetText(), "Skotor Ironmark", "a contact starts an opportunity for them")
 end
 
 -- the add-on must not leak names into the game's shared global space

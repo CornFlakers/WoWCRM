@@ -107,11 +107,11 @@ WoW CRM adds to the game's own profession window (the Professions window on the 
 
 Hover over a material to see which of the two a double-click will do. WoW CRM never crafts for you; the game's Create button stays yours. The built-in notes cover common ores, stone, bars, cloth, leather, herbs, elementals, enchanting materials and vendor supplies. The add-on cannot reach Wowhead from inside the game, so anything else is a click away on Wowhead.
 
-## Pipeline: what people need, before there is an order
+## Opty: what people need, before there is an order
 
 An **opportunity** is a need written down: *Skotor Ironmark needs 5 silver*, *Claire Paige needs more Waylaid Crates for merchant favor*, *Rosa Vell wants a Red Mageweave Bag next week*. Orders record what happened; opportunities are for planning what should happen.
 
-- **Start one** on the **Pipeline** tab (type who it is for, or press **Me** or **Target**), from a lead (**Opportunity** on the Leads tab), or from a contact (**+ Opportunity**).
+- **Start one** on the **Opty** tab (type who it is for, or press **Me** or **Target**), from a lead (**Opportunity** on the Leads tab), or from a contact (**+ Opportunity**).
 - **Your own characters count.** It's your address book, so requests to and from your alts sit next to everyone else's. Mark your alts as **my character** on the Contacts tab and they show in blue.
 - **Which way:** *They need it* (from you), or *I need it from them*.
 - **Work it:** a stage (New, Working, Quoted, then Won or Lost), a quote, a next step, and **Follow up in N days**. Open opportunities are listed with the most overdue first, and due ones are marked. **Alert me when they are online** uses the same online alert as follow-ups.

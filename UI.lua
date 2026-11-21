@@ -583,7 +583,7 @@ AddTab("Leads", function(p, tab)
 			local o, err, existing = M.LeadToOpportunity(l.id, U.Now())
 			if not o then UI.Msg(err, true) return end
 			if not existing then ns.Changed() end
-			UI.Show("Pipeline", o.id)
+			UI.Show("Opty", o.id)
 			UI.Msg(existing and "This lead already has an open opportunity; here it is."
 				or "Opportunity started from the lead. Write down what they need, a quote and when to follow up, then Save.")
 		end), p, X + 194, -342),
@@ -707,7 +707,7 @@ AddTab("Contacts", function(p, tab)
 	At(Label(p, "Status"), p, X, -32)
 	local status = At(Cycle(p, ns.CONTACT_STATUS, 130), p, X + 90, -28)
 	local oppBtn = At(Button(p, "+ Opportunity", 120, function()
-		if sel then UI.Show("Pipeline", { contact = sel }) end
+		if sel then UI.Show("Opty", { contact = sel }) end
 	end), p, X + 380, -28)
 	At(Label(p, "Tags"), p, X, -58)
 	local tags = At(Edit(p, 300), p, X + 94, -54)
@@ -814,11 +814,11 @@ AddTab("Contacts", function(p, tab)
 	end
 end)
 
--- ---------------------------------------------------------------- Pipeline (opportunities)
+-- ---------------------------------------------------------------- Opty (opportunities)
 -- What people need, written down before there is an order, and worked until it is won or lost.
 -- The person can be one of your own characters.
 
-AddTab("Pipeline", function(p, tab)
+AddTab("Opty", function(p, tab)
 	local sel, filter = nil, "open"
 	local DAY = 86400
 	local filterBtns = {}
@@ -2789,7 +2789,7 @@ end
 
 -- The tabs follow the funnel: campaign, post, lead, contact, order, follow-up, then the tools.
 do
-	local order = { "Campaigns", "Posts", "Leads", "Contacts", "Pipeline", "Orders", "Mail", "Products", "Dashboard", "Options" }
+	local order = { "Campaigns", "Posts", "Leads", "Contacts", "Opty", "Orders", "Mail", "Products", "Dashboard", "Options" }
 	for i = #tabOrder, 1, -1 do tabOrder[i] = nil end
 	for i, n in ipairs(order) do tabOrder[i] = n end
 end

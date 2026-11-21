@@ -990,6 +990,86 @@ function M.LeadToOpportunity(leadId, now)
 	}, now)
 end
 
+-- The open opportunity a trade with this person most likely belongs to: something they need
+-- from you, most recently worked on.
+function M.OpenOpportunityFor(key)
+	local best
+	for _, o in ipairs(R().opportunities) do
+		if o.contact == key and o.dir ~= "mine" and M.IsOpenOpportunity(o) and not (o.order and M.GetOrder(o.order)) then
+			if not best or (o.updated or 0) > (best.updated or 0) then best = o end
+		end
+	end
+	return best
+end
+
+-- What the job is: one of your products and how many. product: { key, name, output } or nil.
+function M.SetOpportunityItem(id, product, qty, now)
+	local o = M.GetOpportunity(id)
+	if not o then return nil end
+	o.product = product and { key = product.key, name = product.name, output = product.output } or nil
+	o.qty = math.max(1, math.floor(tonumber(qty) or 1))
+	o.updated = now
+	return o
+end
+
+-- Materials the customer handed over for this job, before it is delivered.
+-- lines: { name, link, qty, value (copper each, today's price) }
+-- gold: any gold they paid in the same trade, kept until the order is logged.
+function M.AddOpportunityMats(id, lines, now, gold)
+	local o = M.GetOpportunity(id)
+	if not o then return nil end
+	o.mats = o.mats or {}
+	o.paid = (o.paid or 0) + math.max(0, math.floor(tonumber(gold) or 0))
+	for _, l in ipairs(lines or {}) do
+		local name = U.Trim(l.name)
+		if name ~= "" then
+			local id2 = type(l.link) == "string" and tonumber(l.link:match("item:(%d+)")) or l.itemID
+			local found
+			for _, m in ipairs(o.mats) do if m.name == name then found = m end end
+			if found then
+				found.qty = found.qty + math.max(1, math.floor(tonumber(l.qty) or 1))
+			else
+				o.mats[#o.mats + 1] = { name = name, link = l.link, itemID = id2, qty = math.max(1, math.floor(tonumber(l.qty) or 1)),
+					value = math.max(0, math.floor((tonumber(l.value) or 0) + 0.5)) }
+			end
+		end
+	end
+	if o.stage == "new" then o.stage = "working" end
+	o.updated = now
+	return o
+end
+
+-- The job sheet: what the whole job costs, what the customer brought, and what is left for them
+-- to pay. No game API: the recipe, an index of recipes that make its parts, and prices are given.
+--   recipe   { reagents = { { itemID, qty } } } (parts you make, such as bolts, are broken down)
+--   priceOf(itemID, name) -> copper for one, at today's price
+--   each     your price for one (optional); without it the job is priced at its materials
+-- Returns { lines = { { itemID, name, need, brought, each } }, matsCost, broughtValue, base, total }
+function M.OpportunitySheet(o, recipe, index, priceOf, nameOf, each)
+	local qty = math.max(1, tonumber(o.qty) or 1)
+	local brought = {}
+	for _, m in ipairs(o.mats or {}) do
+		local k = m.itemID or m.name
+		brought[k] = (brought[k] or 0) + m.qty
+		if m.itemID then brought[m.name] = (brought[m.name] or 0) + m.qty end
+	end
+	local sheet = { lines = {}, matsCost = 0, broughtValue = 0 }
+	local raw = recipe and ns.Offers.RawMats(recipe, index) or {}
+	for _, g in ipairs(raw) do
+		local name = nameOf and nameOf(g.itemID) or ("item " .. g.itemID)
+		local need = g.qty * qty
+		local have = math.min(need, brought[g.itemID] or brought[name] or 0)
+		local price = math.max(0, tonumber(priceOf and priceOf(g.itemID, name)) or 0)
+		sheet.lines[#sheet.lines + 1] = { itemID = g.itemID, name = name, need = need, brought = have, each = price }
+		sheet.matsCost = sheet.matsCost + need * price
+		sheet.broughtValue = sheet.broughtValue + have * price
+	end
+	sheet.each = tonumber(each)
+	sheet.base = (sheet.each and sheet.each > 0) and (sheet.each * qty) or sheet.matsCost
+	sheet.total = math.max(0, sheet.base - sheet.broughtValue)
+	return sheet
+end
+
 -- Won: an order to fill in, with what they need still to hand over at the quoted price.
 -- Only for what they need from you; something you need from them is simply marked won.
 function M.OpportunityToOrder(id, now)
@@ -1002,8 +1082,17 @@ function M.OpportunityToOrder(id, now)
 	if U.Trim(o.need) ~= "" then notes[#notes + 1] = U.Trim(o.need) end
 	if o.priceText and not o.quote then notes[#notes + 1] = "Agreed: " .. o.priceText end
 	if U.Trim(o.notes) ~= "" then notes[#notes + 1] = U.Trim(o.notes) end
+	-- The item still to hand over: the product when one is set (so handing it over in a trade
+	-- delivers it), else the request's first line.
+	local item = o.product and { name = o.product.name, qty = math.max(1, tonumber(o.qty) or 1), planned = true }
+		or { name = M.OpportunityTitle(o, 60), qty = 1, planned = true }
+	-- What they already handed over for the job counts as materials supplied.
+	local received = {}
+	for _, m in ipairs(o.mats or {}) do
+		received[#received + 1] = { name = m.name, link = m.link, qty = m.qty, value = m.value or 0, kind = "mats" }
+	end
 	local ord = { id = M.NewId(), created = now, updated = now, contact = o.contact, type = "crafted", desc = "",
-		items = { { name = M.OpportunityTitle(o, 60), qty = 1, planned = true } }, received = {}, price = 0,
+		items = { item }, received = received, price = o.paid or 0,
 		notes = table.concat(notes, "\n"), trades = 0, status = "quoted", quote = o.quote,
 		lead = lead and lead.id or nil, opportunity = o.id }
 	if lead then
@@ -1452,7 +1541,8 @@ function M.Export()
 		for _, l in ipairs(o.received) do line("R", l.name, l.qty, l.value, l.kind, l.link) end
 	end
 	for _, o in ipairs(r.opportunities) do
-		line("Y", o.contact, U.Trim(o.need) ~= "" and o.need or M.OpportunityTitle(o, 200), o.dir, o.stage, o.quote, o.due, o.nextStep, o.notes, o.created, o.priceText)
+		line("Y", o.contact, U.Trim(o.need) ~= "" and o.need or M.OpportunityTitle(o, 200), o.dir, o.stage, o.quote, o.due, o.nextStep, o.notes, o.created, o.priceText,
+			o.product and o.product.name, o.product and o.product.output, o.qty)
 	end
 	return table.concat(out, "\n")
 end
@@ -1531,7 +1621,16 @@ function M.Import(text, now)
 				local o = M.SaveOpportunity(nil, { contact = f[2], need = f[3] ~= "" and f[3] or "(request)", dir = f[4],
 					stage = U.Contains(ns.OPP_STAGES, f[5]) and f[5] or "new", price = blank(f[11] or "") or (tonumber(f[6]) and U.FormatMoney(tonumber(f[6]))) or "",
 					due = tonumber(f[7]), nextStep = f[8], notes = f[9] }, created)
-				if o then o.created = created; added.opportunities = added.opportunities + 1 end
+				if o then
+					o.created = created
+					if blank(f[12] or "") then
+						local key = nil
+						for k, p in pairs(r.products) do if type(p) == "table" and p.name == f[12] then key = k end end
+						o.product = { key = key, name = f[12], output = tonumber(f[13]) }
+						o.qty = math.max(1, tonumber(f[14]) or 1)
+					end
+					added.opportunities = added.opportunities + 1
+				end
 			end
 		elseif kind == "S" and pending then
 			pending.items[#pending.items + 1] = { name = f[2], qty = f[3], link = blank(f[4]), planned = f[5] == "planned" or nil }

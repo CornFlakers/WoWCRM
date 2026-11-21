@@ -1102,4 +1102,54 @@ do
 	M.me = "Me-Stormrage"
 end
 
+-- the job sheet: a Red Mageweave Bag at 1g 90s; they bring 5 of the 25 cloth and both dyes
+do
+	fresh()
+	local MAGE, BOLT, DYE, THREAD, BAG = 4338, 4339, 2604, 8343, 10051
+	local NAMES = { [MAGE] = "Mageweave Cloth", [BOLT] = "Bolt of Mageweave", [DYE] = "Red Dye", [THREAD] = "Heavy Silken Thread" }
+	local PRICE = { [MAGE] = 2000, [DYE] = 50, [THREAD] = 1600 }
+	local recipe = { name = "Red Mageweave Bag", output = BAG, reagents = { { itemID = BOLT, qty = 5 }, { itemID = DYE, qty = 2 }, { itemID = THREAD, qty = 2 } } }
+	local list = { recipe, { name = "Bolt of Mageweave", output = BOLT, outputQty = 1, reagents = { { itemID = MAGE, qty = 5 } } } }
+	local function priceOf(id) return PRICE[id] end
+	local function nameOf(id) return NAMES[id] end
+	local o = M.SaveOpportunity(nil, { contact = "Mia-Stormrage", need = "Red Mageweave Bag" }, 1000)
+	M.SetOpportunityItem(o.id, { key = "Tailoring|Red Mageweave Bag", name = "Red Mageweave Bag", output = BAG }, 1, 1000)
+	local s = M.OpportunitySheet(o, recipe, ns.Offers.Index(list), priceOf, nameOf, 19000)
+	eq(s.lines[1].name, "Mageweave Cloth", "bolts are counted as cloth")
+	eq(s.lines[1].need, 25, "25 cloth for one bag")
+	eq(s.matsCost, 25 * 2000 + 2 * 50 + 2 * 1600, "all mats at today's prices")
+	eq(s.base, 19000, "your price for one bag")
+	eq(s.total, 19000, "nothing brought yet: the full price")
+
+	M.AddOpportunityMats(o.id, { { name = "Mageweave Cloth", itemID = MAGE, qty = 5, value = 2000 }, { name = "Red Dye", itemID = DYE, qty = 2, value = 50 } }, 1100)
+	eq(o.stage, "working", "mats handed over: the job is under way")
+	s = M.OpportunitySheet(o, recipe, ns.Offers.Index(list), priceOf, nameOf, 19000)
+	eq(s.lines[1].brought, 5, "5 cloth brought")
+	eq(s.lines[2].brought, 2, "both dyes brought")
+	eq(s.lines[3].brought, 0, "no thread")
+	eq(s.broughtValue, 5 * 2000 + 2 * 50, "what they brought, at what you would pay for it")
+	eq(s.total, 19000 - 10100, "1g 90s minus what they brought")
+
+	M.SetOpportunityItem(o.id, o.product, 2, 1200)
+	s = M.OpportunitySheet(o, recipe, ns.Offers.Index(list), priceOf, nameOf, 19000)
+	eq(s.lines[1].need, 50, "two bags need 50 cloth")
+	eq(s.total, 38000 - 10100, "two bags, minus what they brought")
+	s = M.OpportunitySheet(o, recipe, ns.Offers.Index(list), priceOf, nameOf, nil)
+	eq(s.base, s.matsCost, "with no price of your own, the job is priced at its mats")
+	M.AddOpportunityMats(o.id, { { name = "Mageweave Cloth", itemID = MAGE, qty = 200, value = 2000 } }, 1250)
+	s = M.OpportunitySheet(o, recipe, ns.Offers.Index(list), priceOf, nameOf, 19000)
+	eq(s.lines[1].brought, 50, "more cloth than the job needs is not taken off twice")
+
+	eq(M.OpenOpportunityFor("Mia-Stormrage"), o, "a trade with Mia belongs to this Opty")
+	M.AddOpportunityMats(o.id, {}, 1300, 1000)
+	eq(o.paid, 1000, "gold paid ahead is kept")
+	local ord = M.OpportunityToOrder(o.id, 1400)
+	eq(ord.items[1].name, "Red Mageweave Bag", "the order's item is the product")
+	eq(ord.items[1].qty, 2, "at the Opty's quantity")
+	eq(ord.received[1].kind, "mats", "their mats are materials supplied")
+	eq(ord.received[1].qty, 205, "all of them")
+	eq(ord.price, 1000, "gold already paid counts")
+	eq(M.OpenOpportunityFor("Mia-Stormrage"), nil, "a won Opty no longer catches trades")
+end
+
 print(("test_logic: %d checks passed"):format(count))

@@ -836,6 +836,29 @@ end)
 -- What people need, written down before there is an order, and worked until it is won or lost.
 -- The person can be one of your own characters.
 
+-- The recipe that makes a product, from Mastercraft's scan of this character, and the list it is in.
+local function RecipeByName(name)
+	local db = rawget(_G, "MastercraftDB")
+	local guid = UnitGUID and UnitGUID("player")
+	local mine = type(db) == "table" and type(db.recipes) == "table" and guid and db.recipes[guid]
+	for _, data in pairs(type(mine) == "table" and mine or {}) do
+		if type(data) == "table" and type(data.list) == "table" then
+			for _, r in ipairs(data.list) do
+				if type(r) == "table" and r.name == name then return r, data.list end
+			end
+		end
+	end
+end
+
+-- What one of a material would cost you: the vendor's price for thread and dye, else today's price.
+local function SheetPrice(itemID, name)
+	if ns.Offers.IsVendorName(name) or (Price.IsVendorItem and Price.IsVendorItem(itemID)) then
+		local v = Price.VendorPrice and Price.VendorPrice(itemID)
+		if v then return v end
+	end
+	return (Price.GetByID(itemID))
+end
+
 AddTab("Opty", function(p, tab)
 	local sel, filter = nil, "open"
 	local DAY = 86400
@@ -864,10 +887,29 @@ AddTab("Opty", function(p, tab)
 	At(Label(p, "Stage", "GameFontHighlightSmall"), p, X + 192, -29)
 	local stage = At(Cycle(p, ns.OPP_STAGES, 100), p, X + 230, -24)
 
+	-- the job: one of your products, and how many
+	At(Label(p, "Item"), p, X, -54)
+	local itemBtn = At(Button(p, "No item", 210), p, X + 70, -50)
+	local itemSel -- product name, or nil
+	local function products() return M.ProductChoices(nil) end
+	local function showItem() itemBtn:SetText(itemSel or "No item") end
+	itemBtn:SetScript("OnClick", function()
+		local names = { false }
+		for _, c in ipairs(products()) do names[#names + 1] = c.name end
+		if #names == 1 then UI.Msg("Mark the things you make as products on the Products tab, then pick one here.", true) return end
+		local i = 1
+		for k, n in ipairs(names) do if n == itemSel then i = k end end
+		itemSel = names[i % #names + 1] or nil
+		showItem()
+		tab.Refresh()
+	end)
+	At(Label(p, "Qty", "GameFontHighlightSmall"), p, X + 290, -54)
+	local qtyBox = At(Edit(p, 34), p, X + 318, -50)
+
 	-- price: gold, or anything ("their mats + 50s tip")
-	At(Label(p, "Price"), p, X, -52)
-	local price = At(Edit(p, 170), p, X + 70, -48)
-	local priceHint = At(Label(p, "", "GameFontDisableSmall", 170), p, X + 250, -52)
+	At(Label(p, "Price"), p, X, -80)
+	local price = At(Edit(p, 170), p, X + 70, -76)
+	local priceHint = At(Label(p, "", "GameFontDisableSmall", 170), p, X + 250, -80)
 	price:SetScript("OnTextChanged", function()
 		local text, copper = M.ReadPrice(price:GetText())
 		priceHint:SetText(not text and "gold (2g 50s), or words: \"their mats + 50s\""
@@ -876,21 +918,31 @@ AddTab("Opty", function(p, tab)
 	end)
 
 	-- follow-up
-	At(Label(p, "Follow up in", "GameFontHighlightSmall"), p, X, -78)
-	local days = At(Edit(p, 34), p, X + 76, -74)
-	local dueText = At(Label(p, "days", "GameFontHighlightSmall", 120), p, X + 116, -78)
-	At(Label(p, "Next", "GameFontHighlightSmall"), p, X + 214, -78)
-	local nextStep = At(Edit(p, 170), p, X + 246, -74)
+	At(Label(p, "Follow up in", "GameFontHighlightSmall"), p, X, -106)
+	local days = At(Edit(p, 34), p, X + 76, -102)
+	local dueText = At(Label(p, "days", "GameFontHighlightSmall", 120), p, X + 116, -106)
+	At(Label(p, "Next", "GameFontHighlightSmall"), p, X + 214, -106)
+	local nextStep = At(Edit(p, 170), p, X + 246, -102)
 
 	-- the request, as long as it needs to be
-	At(Label(p, "Request"), p, X, -100)
-	local request = At(MultiEdit(p, 420, 82), p, X, -116)
+	At(Label(p, "Request"), p, X, -128)
+	local request = At(MultiEdit(p, 420, 52), p, X, -144)
 	linkEdits[#linkEdits + 1] = request.edit
 
+	-- the job sheet: whole job, what they brought, what is left for them to pay
+	local sheetText = At(Label(p, "", "GameFontHighlightSmall", 326), p, X, -200)
+	local sheetTotal
+	local useBtn = At(Button(p, "Use this price", 92, function()
+		if not sheetTotal then return end
+		SetEdit(price, U.FormatMoney(sheetTotal))
+		price:GetScript("OnTextChanged")(price)
+		UI.Msg("Price set to " .. U.FormatMoney(sheetTotal) .. ". Press Save to keep it.")
+	end), p, X + 328, -198)
+
 	-- everything said with them
-	local convoLabel = At(Label(p, "Conversation", "GameFontNormal", 420), p, X, -204)
-	local convo = At(TextBox(p, 420, 116), p, X, -220)
-	local info = At(Label(p, "", "GameFontHighlightSmall", 420), p, X, -394)
+	local convoLabel = At(Label(p, "Conversation", "GameFontNormal", 420), p, X, -266)
+	local convo = At(TextBox(p, 420, 62), p, X, -282)
+	local info = At(Label(p, "", "GameFontHighlightSmall", 420), p, X, -404)
 
 	local function current() return sel and M.GetOpportunity(sel) end
 
@@ -904,6 +956,9 @@ AddTab("Opty", function(p, tab)
 		local left = o and o.due and math.max(0, math.ceil((o.due - U.Now()) / DAY))
 		SetEdit(days, left and tostring(left) or "")
 		SetEdit(nextStep, o and o.nextStep or "")
+		itemSel = o and o.product and o.product.name or nil
+		showItem()
+		SetEdit(qtyBox, tostring(o and o.qty or 1))
 		-- Older opportunities had separate notes; they join the request.
 		local text = o and (o.need or "") or ""
 		if o and U.Trim(o.notes) ~= "" then text = (U.Trim(text) ~= "" and (text .. "\n") or "") .. o.notes end
@@ -934,6 +989,9 @@ AddTab("Opty", function(p, tab)
 		}, U.Now())
 		if not o then UI.Msg(err, true) return end
 		sel = o.id
+		local chosen
+		for _, c in ipairs(products()) do if c.name == itemSel then chosen = c end end
+		M.SetOpportunityItem(o.id, chosen, tonumber(qtyBox:GetText()) or 1, U.Now())
 		if key == M.me then
 			local c = M.GetContact(key)
 			if c and c.status == "lead" then c.status = "my character" end
@@ -942,7 +1000,7 @@ AddTab("Opty", function(p, tab)
 		return o
 	end
 
-	local Y = -340
+	local Y = -350
 	At(Button(p, "Save", 80, function()
 		if save() then UI.Msg("Opportunity saved.") end
 	end), p, X, Y)
@@ -1031,6 +1089,42 @@ AddTab("Opty", function(p, tab)
 			end
 		end
 
+		-- the job sheet
+		sheetTotal = nil
+		local chosen
+		for _, c in ipairs(products()) do if c.name == itemSel then chosen = c end end
+		if chosen then
+			local recipe, list = RecipeByName(chosen.name)
+			local sheetOpp = { qty = tonumber(qtyBox:GetText()) or 1, mats = o and o.mats or nil }
+			local each = DB.R.products[chosen.key] and tonumber(DB.R.products[chosen.key].price) or nil
+			local s = M.OpportunitySheet(sheetOpp, recipe, ns.Offers.Index(list), SheetPrice, Price.ItemName, each)
+			local qty = math.max(1, sheetOpp.qty)
+			local L = {}
+			L[#L + 1] = s.each and ("%dx %s at %s = |cffffd100%s|r"):format(qty, chosen.name, U.FormatMoney(s.each), U.FormatMoney(s.base))
+				or ("%dx %s, priced at its materials: |cffffd100%s|r"):format(qty, chosen.name, U.FormatMoney(s.base))
+			if not recipe then
+				L[#L + 1] = "|cff888888Recipe not found in Mastercraft's scan, so the materials are unknown.|r"
+			else
+				local need, have = {}, {}
+				for _, g in ipairs(s.lines) do
+					need[#need + 1] = g.need .. " " .. g.name
+					if g.brought > 0 then have[#have + 1] = g.brought .. " " .. g.name end
+				end
+				L[#L + 1] = "Mats: " .. table.concat(need, ", ") .. " = " .. U.FormatMoney(s.matsCost)
+				L[#L + 1] = (#have > 0 and ("They brought: " .. table.concat(have, ", ")) or "They brought: nothing yet")
+					.. " = -" .. U.FormatMoney(s.broughtValue)
+				if o and (o.paid or 0) > 0 then L[#L + 1] = "Already paid: " .. U.FormatMoney(o.paid) end
+			end
+			sheetTotal = math.max(0, s.total - (o and o.paid or 0))
+			L[#L + 1] = "|cff40ff40Their price now: " .. U.FormatMoney(sheetTotal) .. "|r"
+			sheetText:SetText(table.concat(L, "\n"))
+			useBtn:Show()
+		else
+			local extra = o and o.mats and #o.mats > 0 and ("They brought: " .. M.Summary(o.mats, 60)) or nil
+			sheetText:SetText((extra and (extra .. "\n") or "") .. "|cff888888Pick an Item to see the job sheet: the price, the mats, and what they have brought.|r")
+			useBtn:Hide()
+		end
+
 		if not o then
 			local due = M.DueOpportunities(now)
 			info:SetText((#items == 0 and filter == "open") and "Nothing open. Type who it is for and the request, then Save.\nOr start one from a lead or a contact."
@@ -1042,6 +1136,7 @@ AddTab("Opty", function(p, tab)
 			order and ("\n|cff40ff40Order:|r " .. M.OrderTitle(order, 40) .. " - " .. order.status) or ""))
 	end
 	days:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
+	qtyBox:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
 	who:SetScript("OnEnterPressed", function(self) self:ClearFocus(); tab.Refresh() end)
 	load(nil)
 end)

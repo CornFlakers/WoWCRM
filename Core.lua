@@ -47,6 +47,25 @@ StaticPopupDialogs["WOWCRM_CONFIRM"] = {
 	preferredIndex = 3,
 }
 
+-- A trade with someone who has an open opportunity: is it for that job?
+function ns.ChooseOpty(text, yesLabel, onYes, onOther)
+	StaticPopupDialogs["WOWCRM_OPTY"].button1 = yesLabel
+	StaticPopup_Show("WOWCRM_OPTY", text, nil, { yes = onYes, other = onOther })
+end
+
+StaticPopupDialogs["WOWCRM_OPTY"] = {
+	text = "%s",
+	button1 = "For this Opty",
+	button2 = "Ignore",
+	button3 = "Not for it",
+	OnAccept = function(_, data) if data and data.yes then data.yes() end end,
+	OnAlt = function(_, data) if data and data.other then data.other() end end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
 -- Three-way question used for follow-up trades: add to the current order, start a new one, or ignore.
 function ns.Choose(text, onAdd, onNew)
 	StaticPopup_Show("WOWCRM_TRADE", text, nil, { add = onAdd, new = onNew })

@@ -1042,13 +1042,13 @@ end
 do
 	UI.Show("Opty")
 	local pipe = UI.tabs.Opty.panel
-	local edits = kind("EditBox", pipe) -- for, price, days, next step, request
+	local edits = kind("EditBox", pipe) -- for, qty, price, days, next step, request
 	click("Me", pipe)
 	eq(edits[1]:GetText(), "Seller", "Me fills in the character you are playing")
 	edits[1]:SetText("skotor ironmark")
-	edits[2]:SetText("50s")
-	edits[3]:SetText("2")
-	edits[5]:SetText("5 silver\nfor the repair bill")
+	edits[3]:SetText("50s")
+	edits[4]:SetText("2")
+	edits[6]:SetText("5 silver\nfor the repair bill")
 	click("Save", pipe)
 	local opp
 	for _, o in ipairs(DB.R.opportunities) do if (o.need or ""):find("^5 silver") then opp = o end end
@@ -1090,6 +1090,47 @@ do
 	UI.Show("Contacts", "Skotor Ironmark-Stormrage")
 	click("+ Opportunity", UI.tabs.Contacts.panel)
 	eq(kind("EditBox", UI.tabs.Opty.panel)[1]:GetText(), "Skotor Ironmark", "a contact starts an opportunity for them")
+end
+
+-- trades and an open Opty: their mats are logged on it, handing over the bag logs the order
+do
+	npcName, npcSecond = "Mia", nil
+	local opp = M.SaveOpportunity(nil, { contact = "Mia-Stormrage", need = "Red Mageweave Bag" }, clock)
+	M.SetOpportunityItem(opp.id, { name = "Red Mageweave Bag" }, 1, clock)
+	local orders = #DB.R.orders
+	doTrade(nil, { "Mageweave Cloth", 5 }, 0)
+	eq(#DB.R.orders, orders, "a trade of mats for the Opty is not an order yet")
+	eq(opp.mats and opp.mats[1].qty, 5, "the mats are logged on the Opty")
+	eq(opp.stage, "working", "and it is under way")
+	doTrade({ "Red Mageweave Bag", 1 }, nil, 8900)
+	eq(#DB.R.orders, orders + 1, "handing over the bag logs the order")
+	local ord = DB.R.orders[#DB.R.orders]
+	eq(ord.opportunity, opp.id, "from the Opty")
+	eq(ord.received[1].name, "Mageweave Cloth", "with their mats as supplied")
+	eq(ord.received[1].kind, "mats", "as materials, not payment")
+	eq(ord.price, 8900, "and the gold they paid")
+	eq(ord.status, "paid", "delivered and paid")
+	local _, planned = M.ItemCounts(ord)
+	eq(planned, 0, "the bag is handed over")
+	eq(opp.stage, "won", "the Opty is won")
+	npcName, npcSecond = "Buyer", nil
+end
+
+-- the job sheet on the Opty screen
+do
+	local opp = M.SaveOpportunity(nil, { contact = "Buyer-Stormrage", need = "two bags" }, clock)
+	M.SetOpportunityItem(opp.id, { key = "Tailoring|Runecloth Bag", name = "Runecloth Bag", output = 14046 }, 2, clock)
+	UI.Show("Opty", opp.id)
+	local sheet
+	for _, w in ipairs(widgets) do
+		if w._kind == "FontString" and inside(w, UI.tabs.Opty.panel) and w._text:find("Their price now", 1, true) then sheet = w._text end
+	end
+	eq(sheet ~= nil, true, "the job sheet is shown")
+	eq(sheet:find("2x Runecloth Bag", 1, true) ~= nil, true, "for two bags")
+	eq(sheet:find("10 item 14048", 1, true) ~= nil or sheet:find("10 ", 1, true) ~= nil, true, "with the mats for two")
+	click("Use this price", UI.tabs.Opty.panel)
+	eq(kind("EditBox", UI.tabs.Opty.panel)[3]:GetText() ~= "", true, "Use this price fills in the price")
+	M.DeleteOpportunity(opp.id)
 end
 
 -- the add-on must not leak names into the game's shared global space

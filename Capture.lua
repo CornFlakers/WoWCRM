@@ -53,11 +53,9 @@ ns.On("TRADE_ACCEPT_UPDATE", function(player, target)
 	trade.received = readSide(GetTradeTargetItemLink, GetTradeTargetItemInfo, true)
 end)
 
-local function offerTrade(t)
+local function offerOrder(t)
 	local key = t.key
-	if not allowed(key) then return end
 	local gold = math.max(0, t.gold or 0)
-	if #t.given == 0 and #t.received == 0 and gold <= 0 then return end
 	local now = U.Now()
 	local current = M.CurrentOrder(key, now)
 
@@ -89,6 +87,52 @@ local function offerTrade(t)
 	else
 		ns.Confirm(table.concat(L, "\n"), function() record(nil) end)
 	end
+end
+
+-- A trade with someone who has an open opportunity is offered to that job first:
+--   they hand over materials -> "are these for the Opty?" (logged on it, no order yet)
+--   you hand over the goods  -> "deliver the Opty?" (the order is logged now, with their
+--                               materials as supplied and whatever they paid)
+-- "Not for it" goes on to the usual order question.
+local function offerTrade(t)
+	local key = t.key
+	if not allowed(key) then return end
+	local gold = math.max(0, t.gold or 0)
+	if #t.given == 0 and #t.received == 0 and gold <= 0 then return end
+	local opp = M.OpenOpportunityFor(key)
+	if not opp then return offerOrder(t) end
+	local who = U.Display(key, DB.realm)
+	local title = M.OpportunityTitle(opp, 50)
+	if #t.given == 0 then
+		local L = { "WoW CRM - trade with |cffffff00" .. who .. "|r", "" }
+		if #t.received > 0 then L[#L + 1] = "You received: " .. M.Summary(t.received, 80) end
+		if gold > 0 then L[#L + 1] = "Gold received: " .. U.FormatMoney(gold) end
+		L[#L + 1] = ""
+		L[#L + 1] = ("Are these for their Opty \"%s\"?"):format(title)
+		ns.ChooseOpty(table.concat(L, "\n"), "For this Opty", function()
+			M.AddOpportunityMats(opp.id, t.received, U.Now(), gold)
+			ns.Print(("logged on %s's Opty \"%s\": %s%s. Open the Opty tab to see their price now."):format(
+				who, title, #t.received > 0 and M.Summary(t.received, 60) or "",
+				gold > 0 and ((#t.received > 0 and " and " or "") .. U.FormatMoney(gold)) or ""))
+			ns.Changed()
+		end, function() offerOrder(t) end)
+		return
+	end
+	local L = { "WoW CRM - trade with |cffffff00" .. who .. "|r", "", "You gave: " .. M.Summary(t.given, 80) }
+	if #t.received > 0 then L[#L + 1] = "You received: " .. M.Summary(t.received, 70) end
+	if gold > 0 then L[#L + 1] = "Gold received: " .. U.FormatMoney(gold) end
+	L[#L + 1] = ""
+	L[#L + 1] = ("Deliver their Opty \"%s\"? This logs the order%s."):format(title,
+		(opp.mats and #opp.mats > 0) and ", with the materials they brought" or "")
+	ns.ChooseOpty(table.concat(L, "\n"), "Deliver the Opty", function()
+		local ord = M.OpportunityToOrder(opp.id, U.Now())
+		if not ord then return offerOrder(t) end
+		local o = M.AddTrade(ord.id, key, { given = t.given, received = t.received, gold = gold }, U.Now())
+		local g, goods, mats = M.OrderValue(o)
+		ns.Print(("Opty delivered: order for %s is %s: %s gold, %s in goods, %s in materials they supplied."):format(
+			who, o.status, U.FormatMoney(g), U.FormatMoney(goods), U.FormatMoney(mats)))
+		ns.Changed()
+	end, function() offerOrder(t) end)
 end
 
 ns.On("UI_INFO_MESSAGE", function(messageType, message)

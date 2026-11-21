@@ -118,6 +118,8 @@ An **opportunity** is a need written down: *Skotor Ironmark needs 5 silver*, *Cl
 - **Which way:** *They need it* (from you), or *I need it from them*.
 - **Price:** gold (`2g 50s`) or words (`their mats + 50s tip`). Gold becomes the order's agreed price; words go in the order's notes.
 - **Work it:** a stage (New, Working, Quoted, then Won or Lost), a next step, and **Follow up in N days**. Open ones are listed with the most overdue first, and due ones are marked. **Alert me when online** uses the same online alert as follow-ups.
+- **Item and Qty:** pick one of your products and how many. The Opty then shows a **job sheet**: your price × quantity (or the materials at today's prices if you have not set a price), every material needed (bolts broken down into cloth), what they have brought so far valued at what it would cost you to buy, and **their price now**. **Use this price** puts it in Price.
+- **Trades follow the Opty.** When someone with an open Opty trades you materials, WoW CRM asks *"Are these for their Opty?"*. Yes logs them on the Opty and no order is made yet. When you hand over the goods, it offers to **Deliver the Opty**: that logs the order, with their materials as supplied and the gold they paid. **Not for it** goes to the usual order question.
 - **Won: make it an order** starts an order with the request's first line as the item still to hand over. The full request goes in the order's notes. Your next trade with them fills it in, as with any order.
 
 ## From lead to order

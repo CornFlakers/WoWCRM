@@ -1042,23 +1042,23 @@ end
 do
 	UI.Show("Opty")
 	local pipe = UI.tabs.Opty.panel
-	local edits = kind("EditBox", pipe) -- for, needs, quote, days, next step, notes
+	local edits = kind("EditBox", pipe) -- for, price, days, next step, request
 	click("Me", pipe)
 	eq(edits[1]:GetText(), "Seller", "Me fills in the character you are playing")
 	edits[1]:SetText("skotor ironmark")
-	edits[2]:SetText("5 silver")
-	edits[3]:SetText("50s")
-	edits[4]:SetText("2")
+	edits[2]:SetText("50s")
+	edits[3]:SetText("2")
+	edits[5]:SetText("5 silver\nfor the repair bill")
 	click("Save", pipe)
 	local opp
-	for _, o in ipairs(DB.R.opportunities) do if o.need == "5 silver" then opp = o end end
+	for _, o in ipairs(DB.R.opportunities) do if (o.need or ""):find("^5 silver") then opp = o end end
 	eq(opp ~= nil, true, "opportunity saved")
 	eq(opp.contact, "Skotor Ironmark-Stormrage", "a typed name becomes a contact")
 	eq(opp.quote, 5000, "quote saved")
 	eq(opp.due ~= nil and opp.due > clock, true, "follow-up date set")
 	local row
 	for _, w in ipairs(widgets) do
-		if type(w.item) == "table" and w.item.need == "5 silver" and w._shown and inside(w, pipe) then row = w end
+		if type(w.item) == "table" and w.item == opp and w._shown and inside(w, pipe) then row = w end
 	end
 	eq(row ~= nil, true, "listed under Open")
 	click("Won: make it an order", pipe)
@@ -1080,6 +1080,11 @@ do
 	local fromLead
 	for _, o in ipairs(DB.R.opportunities) do if o.lead == leadRow.item.id then fromLead = o end end
 	eq(fromLead ~= nil, true, "with the lead remembered")
+	local convoShown = false
+	for _, w in ipairs(widgets) do
+		if w._kind == "FontString" and inside(w, UI.tabs.Opty.panel) and w._text:find(leadRow.item.text or "~none~", 1, true) then convoShown = true end
+	end
+	eq(convoShown, true, "the lead's whispers are shown on the Opty")
 
 	-- from a contact
 	UI.Show("Contacts", "Skotor Ironmark-Stormrage")

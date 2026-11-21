@@ -463,6 +463,50 @@ local function TextBox(parent, w, h)
 	return box
 end
 
+-- A lead's conversation as lines of text: the post they answered, then every whisper both ways.
+local function LeadThread(l)
+	local L = {}
+	local them = U.Shorten((U.SplitKey(l.contact)), 20)
+	local post = l.post and M.GetPost(l.post)
+	if l.sentAt and l.offer and not l.post then
+		L[#L + 1] = ("|cff888888%s  You offered a %s|r"):format(When(l.sentAt), l.offer)
+	elseif l.sentAt then
+		L[#L + 1] = ("|cff888888%s  You posted \"%s\"|r"):format(When(l.sentAt), post and post.name or "a post since deleted")
+	end
+	local msgs = M.LeadChat(l)
+	if #msgs == 0 then
+		L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(When(l.started or l.time), them, l.text or "")
+	end
+	local lastDay
+	for _, m in ipairs(msgs) do
+		local day = date("%b %d", m.t)
+		local stamp = day == lastDay and date("%H:%M", m.t) or (day .. " " .. date("%H:%M", m.t))
+		lastDay = day
+		if m.me then
+			local who = U.Shorten((U.SplitKey(m.char or M.me or "You")), 20)
+			L[#L + 1] = ("|cff888888%s|r  |cff80c0ff%s:|r %s"):format(stamp, who, m.text)
+		else
+			L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(stamp, them, m.text)
+		end
+	end
+	return table.concat(L, "\n")
+end
+
+-- Everything said with this person, oldest first.
+local function ContactThread(key)
+	local c = M.GetContact(key)
+	if not c or not c.chat or #c.chat == 0 then return "|cff888888No whispers with them yet.|r" end
+	local them, L, lastDay = U.Shorten((U.SplitKey(key)), 20), {}, nil
+	for _, m in ipairs(c.chat) do
+		local day = date("%b %d", m.t)
+		local stamp = day == lastDay and date("%H:%M", m.t) or (day .. " " .. date("%H:%M", m.t))
+		lastDay = day
+		local who = m.me and ("|cff80c0ff" .. U.Shorten((U.SplitKey(m.char or M.me or "You")), 20)) or ("|cffffd100" .. them)
+		L[#L + 1] = ("|cff888888%s|r  %s:|r %s"):format(stamp, who, m.text)
+	end
+	return table.concat(L, "\n")
+end
+
 AddTab("Leads", function(p, tab)
 	local sel, showClosed = nil, false
 	-- Show every lead, or only those who answered one kind of post.
@@ -595,33 +639,7 @@ AddTab("Leads", function(p, tab)
 	end)
 
 	-- The conversation: the post they answered, then every whisper both ways.
-	local function thread(l)
-		local L = {}
-		local them = U.Shorten((U.SplitKey(l.contact)), 20)
-		local post = l.post and M.GetPost(l.post)
-		if l.sentAt and l.offer and not l.post then
-			L[#L + 1] = ("|cff888888%s  You offered a %s|r"):format(When(l.sentAt), l.offer)
-		elseif l.sentAt then
-			L[#L + 1] = ("|cff888888%s  You posted \"%s\"|r"):format(When(l.sentAt), post and post.name or "a post since deleted")
-		end
-		local msgs = M.LeadChat(l)
-		if #msgs == 0 then
-			L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(When(l.started or l.time), them, l.text or "")
-		end
-		local lastDay
-		for _, m in ipairs(msgs) do
-			local day = date("%b %d", m.t)
-			local stamp = day == lastDay and date("%H:%M", m.t) or (day .. " " .. date("%H:%M", m.t))
-			lastDay = day
-			if m.me then
-				local who = U.Shorten((U.SplitKey(m.char or M.me or "You")), 20)
-				L[#L + 1] = ("|cff888888%s|r  |cff80c0ff%s:|r %s"):format(stamp, who, m.text)
-			else
-				L[#L + 1] = ("|cff888888%s|r  |cffffd100%s:|r %s"):format(stamp, them, m.text)
-			end
-		end
-		return table.concat(L, "\n")
-	end
+	local thread = LeadThread
 
 	local shownFor, shownCount
 	function tab.Select(id) sel = id; picker:Hide(); tab.Refresh() end
@@ -829,62 +847,80 @@ AddTab("Opty", function(p, tab)
 	local list = At(List(p, 330, 404, function(item) tab.Select(item.id) end), p, 0, -26)
 	local X = 344
 
+	-- who, which way, stage
 	At(Label(p, "For"), p, X, -4)
 	local who = At(Edit(p, 190), p, X + 70, 0)
-	At(Button(p, "Me", 44, function()
-		SetEdit(who, Name(M.me))
-	end), p, X + 266, 1)
+	At(Button(p, "Me", 44, function() SetEdit(who, Name(M.me)); tab.Refresh() end), p, X + 266, 1)
 	At(Button(p, "Target", 62, function()
 		local n, second = UnitName("target")
 		if not n or not UnitIsPlayer("target") then UI.Msg("Target a player first.", true) return end
 		SetEdit(who, Name(M.JoinName(n, second)))
+		tab.Refresh()
 	end), p, X + 312, 1)
-
-	At(Label(p, "Needs"), p, X, -30)
-	local need = At(Edit(p, 340), p, X + 70, -26)
-	linkEdits[#linkEdits + 1] = need
-	local dir = At(Button(p, "", 180), p, X, -52)
+	local dir = At(Button(p, "", 180), p, X, -24)
 	local dirSel = "theirs"
 	local function showDir() dir:SetText(ns.OPP_DIR_LABEL[dirSel]) end
 	dir:SetScript("OnClick", function() dirSel = dirSel == "theirs" and "mine" or "theirs"; showDir() end)
-	At(Label(p, "Stage", "GameFontHighlightSmall"), p, X + 192, -57)
-	local stage = At(Cycle(p, ns.OPP_STAGES, 100), p, X + 230, -52)
+	At(Label(p, "Stage", "GameFontHighlightSmall"), p, X + 192, -29)
+	local stage = At(Cycle(p, ns.OPP_STAGES, 100), p, X + 230, -24)
 
-	At(Label(p, "Quote"), p, X, -84)
-	local quote = At(Edit(p, 90), p, X + 70, -80)
-	At(Label(p, "Follow up in", "GameFontHighlightSmall"), p, X + 172, -84)
-	local days = At(Edit(p, 34), p, X + 252, -80)
-	local dueText = At(Label(p, "days", "GameFontHighlightSmall", 140), p, X + 292, -84)
-	At(Label(p, "Next step"), p, X, -110)
-	local nextStep = At(Edit(p, 340), p, X + 70, -106)
-	At(Label(p, "Notes"), p, X, -134)
-	local notes = At(MultiEdit(p, 420, 86), p, X, -150)
-	local info = At(Label(p, "", "GameFontHighlightSmall", 420), p, X, -244)
+	-- price: gold, or anything ("their mats + 50s tip")
+	At(Label(p, "Price"), p, X, -52)
+	local price = At(Edit(p, 170), p, X + 70, -48)
+	local priceHint = At(Label(p, "", "GameFontDisableSmall", 170), p, X + 250, -52)
+	price:SetScript("OnTextChanged", function()
+		local text, copper = M.ReadPrice(price:GetText())
+		priceHint:SetText(not text and "gold (2g 50s), or words: \"their mats + 50s\""
+			or copper and ("|cff40ff40" .. U.FormatMoney(copper) .. "|r, goes on the order")
+			or "kept as written, goes in the order's notes")
+	end)
+
+	-- follow-up
+	At(Label(p, "Follow up in", "GameFontHighlightSmall"), p, X, -78)
+	local days = At(Edit(p, 34), p, X + 76, -74)
+	local dueText = At(Label(p, "days", "GameFontHighlightSmall", 120), p, X + 116, -78)
+	At(Label(p, "Next", "GameFontHighlightSmall"), p, X + 214, -78)
+	local nextStep = At(Edit(p, 170), p, X + 246, -74)
+
+	-- the request, as long as it needs to be
+	At(Label(p, "Request"), p, X, -100)
+	local request = At(MultiEdit(p, 420, 82), p, X, -116)
+	linkEdits[#linkEdits + 1] = request.edit
+
+	-- everything said with them
+	local convoLabel = At(Label(p, "Conversation", "GameFontNormal", 420), p, X, -204)
+	local convo = At(TextBox(p, 420, 116), p, X, -220)
+	local info = At(Label(p, "", "GameFontHighlightSmall", 420), p, X, -394)
 
 	local function current() return sel and M.GetOpportunity(sel) end
 
 	local function load(o, contactKey)
 		sel = o and o.id or nil
 		SetEdit(who, o and Name(o.contact) or (contactKey and Name(contactKey)) or "")
-		SetEdit(need, o and o.need or "")
 		dirSel = o and o.dir or "theirs"
 		showDir()
 		stage:Set(o and o.stage or "new")
-		SetEdit(quote, o and o.quote and U.FormatMoney(o.quote) or "")
+		SetEdit(price, o and (o.priceText or (o.quote and U.FormatMoney(o.quote))) or "")
 		local left = o and o.due and math.max(0, math.ceil((o.due - U.Now()) / DAY))
 		SetEdit(days, left and tostring(left) or "")
 		SetEdit(nextStep, o and o.nextStep or "")
-		notes.edit:SetText(o and o.notes or "")
+		-- Older opportunities had separate notes; they join the request.
+		local text = o and (o.need or "") or ""
+		if o and U.Trim(o.notes) ~= "" then text = (U.Trim(text) ~= "" and (text .. "\n") or "") .. o.notes end
+		request.edit:SetText(text)
+	end
+
+	-- The contact typed in For, as a key (an existing contact when the name matches one).
+	local function typedKey()
+		local t = U.Trim(who:GetText())
+		if t == "" then return nil end
+		local found = M.FindContact(t)
+		return found and found.key or U.NormName(t, DB.realm, true)
 	end
 
 	-- What is on screen, saved. Returns the opportunity, or nil after saying what is wrong.
 	local function save()
-		local key = U.Trim(who:GetText()) ~= "" and U.NormName(who:GetText(), DB.realm, true) or nil
-		local found = key and M.FindContact(who:GetText())
-		if found then key = found.key end
-		local q = U.Trim(quote:GetText())
-		local qv = q ~= "" and U.ParseMoney(q) or nil
-		if q ~= "" and not qv then UI.Msg("Quote not understood. Use a form like 2g 50s.", true) return end
+		local key = typedKey()
 		local d = U.Trim(days:GetText())
 		local dn = d ~= "" and tonumber(d) or nil
 		if d ~= "" and not dn then UI.Msg("Follow up in: type a number of days.", true) return end
@@ -893,8 +929,8 @@ AddTab("Opty", function(p, tab)
 		-- Keep the exact follow-up time when the number of days was not changed.
 		if old and old.due and dn and dn == math.max(0, math.ceil((old.due - U.Now()) / DAY)) then due = old.due end
 		local o, err = M.SaveOpportunity(sel, {
-			contact = key, need = need:GetText(), dir = dirSel, stage = stage.value, quote = qv,
-			due = due, nextStep = nextStep:GetText(), notes = notes.edit:GetText(),
+			contact = key, need = request.edit:GetText(), dir = dirSel, stage = stage.value, price = price:GetText(),
+			due = due, nextStep = nextStep:GetText(), notes = "",
 		}, U.Now())
 		if not o then UI.Msg(err, true) return end
 		sel = o.id
@@ -906,20 +942,21 @@ AddTab("Opty", function(p, tab)
 		return o
 	end
 
-	At(Button(p, "Save", 90, function()
+	local Y = -340
+	At(Button(p, "Save", 80, function()
 		if save() then UI.Msg("Opportunity saved.") end
-	end), p, X, -296)
-	At(Button(p, "New", 70, function() load(nil); who:SetFocus(); tab.Refresh() end), p, X + 94, -296)
-	At(Button(p, "Delete", 70, function()
+	end), p, X, Y)
+	At(Button(p, "New", 60, function() load(nil); who:SetFocus(); tab.Refresh() end), p, X + 84, Y)
+	At(Button(p, "Delete", 66, function()
 		local o = current()
 		if not o then return end
-		ns.Confirm("Delete the opportunity \"" .. U.Shorten(o.need, 40) .. "\"?", function()
+		ns.Confirm("Delete the opportunity \"" .. M.OpportunityTitle(o, 40) .. "\"?", function()
 			M.DeleteOpportunity(o.id)
 			load(nil)
 			ns.Changed()
 		end)
-	end), p, X + 168, -296)
-	local convert = At(Button(p, "Won: make it an order", 180, function()
+	end), p, X + 148, Y)
+	local convert = At(Button(p, "Won: make it an order", 200, function()
 		local o = save()
 		if not o then return end
 		local ord, err = M.OpportunityToOrder(o.id, U.Now())
@@ -928,24 +965,23 @@ AddTab("Opty", function(p, tab)
 		UI.Show("Orders", ord.id)
 		UI.Msg("Order started for " .. Name(ord.contact) .. (ord.quote and (" at " .. U.FormatMoney(ord.quote)) or "")
 			.. ". Your next trade with them fills it in.")
-	end), p, X, -322)
+	end), p, X + 218, Y)
 	At(Button(p, "Whisper", 80, function()
-		local o = current()
-		if o then Chat.Whisper(o.contact) end
-	end), p, X + 184, -322)
+		local key = typedKey()
+		if key then Chat.Whisper(key) end
+	end), p, X, Y - 26)
 	At(Button(p, "Open contact", 110, function()
-		local o = current()
-		if o then UI.Show("Contacts", o.contact) end
-	end), p, X + 268, -322)
-	At(Button(p, "Alert me when they are online", 240, function()
+		local key = typedKey()
+		if key and M.GetContact(key) then UI.Show("Contacts", key) end
+	end), p, X + 84, Y - 26)
+	At(Button(p, "Alert me when online", 170, function()
 		local o = save()
 		if not o then return end
-		M.SetFollowUp(o.contact, U.Shorten(o.need, 80), U.Now())
+		M.SetFollowUp(o.contact, M.OpportunityTitle(o, 80), U.Now())
 		UI.WatchFollowUps()
 		UI.Msg("You will be alerted when " .. Name(o.contact) .. " is online. The list is under /crm follow.")
 		ns.Changed()
-	end), p, X, -348)
-	At(Label(p, "For your own characters too: pick Me, or type an alt's name.\nShift-click an item to link it in Needs.", "GameFontDisableSmall", 420), p, X, -380)
+	end), p, X + 198, Y - 26)
 
 	-- Select an opportunity id, or pass { contact = key } to start a new one for that person.
 	function tab.Select(arg)
@@ -953,6 +989,7 @@ AddTab("Opty", function(p, tab)
 		tab.Refresh()
 	end
 
+	local shownConvo
 	function tab.Refresh()
 		if sel and not current() then load(nil) end
 		local now = U.Now()
@@ -960,10 +997,10 @@ AddTab("Opty", function(p, tab)
 		local items = M.Opportunities(filter)
 		list:Set(items, function(o)
 			local late = M.IsOpenOpportunity(o) and o.due and o.due <= now
-			local who = U.Shorten((U.SplitKey(o.contact)), 16)
-			local mine = M.GetContact(o.contact) and M.GetContact(o.contact).status == "my character"
-			local left = (mine and "|cff80c0ff" or "|cffffd100") .. who .. "|r" .. (o.dir == "mine" and " |cff888888(I need)|r" or "")
-				.. ": " .. U.Shorten(o.need, 30)
+			local c = M.GetContact(o.contact)
+			local mine = c and c.status == "my character"
+			local left = (mine and "|cff80c0ff" or "|cffffd100") .. U.Shorten((U.SplitKey(o.contact)), 16) .. "|r"
+				.. (o.dir == "mine" and " |cff888888(I need)|r" or "") .. ": " .. M.OpportunityTitle(o, 30)
 			local right = "|cff" .. ns.OPP_STAGE_COLOR[o.stage] .. ns.OPP_STAGE_LABEL[o.stage] .. "|r"
 			if M.IsOpenOpportunity(o) and o.due then
 				right = (late and "|cffff6060due|r " or (date("%b %d", math.floor(o.due)) .. " ")) .. right
@@ -971,24 +1008,41 @@ AddTab("Opty", function(p, tab)
 			return left, right
 		end, sel)
 		local o = current()
-		if o then convert:Enable() else convert:Disable() end
-		if o and o.dir == "mine" then convert:Disable() end
+		if o and o.dir ~= "mine" then convert:Enable() else convert:Disable() end
 		local d = tonumber(days:GetText())
 		dueText:SetText(d and ("days (" .. date("%b %d", math.floor(now + d * DAY)) .. ")") or "days")
+
+		-- The conversation: the lead's thread when it came from one, else everything said with them.
+		local key = o and o.contact or typedKey()
+		local lead = o and o.lead and M.GetLead(o.lead)
+		local c = key and M.GetContact(key)
+		local stamp = (o and o.id or "-") .. ":" .. tostring(key) .. ":" .. (c and c.chat and #c.chat or 0)
+		if stamp ~= shownConvo then
+			shownConvo = stamp
+			if lead then
+				convoLabel:SetText("Conversation from the lead")
+				convo:SetText(LeadThread(lead), true)
+			elseif c then
+				convoLabel:SetText("Conversation with " .. U.Shorten((U.SplitKey(key)), 24))
+				convo:SetText(ContactThread(key), true)
+			else
+				convoLabel:SetText("Conversation")
+				convo:SetText("|cff888888Type who it is for to see what you have said to each other.|r")
+			end
+		end
+
 		if not o then
 			local due = M.DueOpportunities(now)
-			info:SetText((#items == 0 and filter == "open") and "Nothing open. Write down what someone needs: type who it is for and what they need, then Save.\nStart one from a lead (Opportunity on the Leads tab) or a contact."
+			info:SetText((#items == 0 and filter == "open") and "Nothing open. Type who it is for and the request, then Save.\nOr start one from a lead or a contact."
 				or (due > 0 and ("|cffff6060" .. due .. " due for a follow-up.|r Select one to work it.") or "Select an opportunity, or press New."))
 			return
 		end
 		local order = o.order and M.GetOrder(o.order)
-		local lead = o.lead and M.GetLead(o.lead)
-		info:SetText(("Opened %s%s   Updated %s%s%s"):format(When(o.created), o.by and o.by ~= o.contact and (" by " .. U.Shorten((U.SplitKey(o.by)), 14)) or "",
-			When(o.updated),
-			lead and ("\nFrom a lead: \"" .. U.Shorten(lead.text or "", 50) .. "\"") or "",
+		info:SetText(("Opened %s   Updated %s%s"):format(When(o.created), When(o.updated),
 			order and ("\n|cff40ff40Order:|r " .. M.OrderTitle(order, 40) .. " - " .. order.status) or ""))
 	end
 	days:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
+	who:SetScript("OnEnterPressed", function(self) self:ClearFocus(); tab.Refresh() end)
 	load(nil)
 end)
 

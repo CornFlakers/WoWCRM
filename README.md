@@ -113,9 +113,12 @@ An **opportunity** is a need written down: *Skotor Ironmark needs 5 silver*, *Cl
 
 - **Start one** on the **Opty** tab (type who it is for, or press **Me** or **Target**), from a lead (**Opportunity** on the Leads tab), or from a contact (**+ Opportunity**).
 - **Your own characters count.** It's your address book, so requests to and from your alts sit next to everyone else's. Mark your alts as **my character** on the Contacts tab and they show in blue.
+- **Request:** write it out over as many lines as you need: what they want, how many, who brings what.
+- **Conversation:** every whisper with them is shown under the request (the lead's conversation when the Opty came from a lead), so nothing has to be copied over.
 - **Which way:** *They need it* (from you), or *I need it from them*.
-- **Work it:** a stage (New, Working, Quoted, then Won or Lost), a quote, a next step, and **Follow up in N days**. Open opportunities are listed with the most overdue first, and due ones are marked. **Alert me when they are online** uses the same online alert as follow-ups.
-- **Won: make it an order** starts an order with what they need still to hand over, at your quote. Your next trade with them fills it in, as with any order.
+- **Price:** gold (`2g 50s`) or words (`their mats + 50s tip`). Gold becomes the order's agreed price; words go in the order's notes.
+- **Work it:** a stage (New, Working, Quoted, then Won or Lost), a next step, and **Follow up in N days**. Open ones are listed with the most overdue first, and due ones are marked. **Alert me when online** uses the same online alert as follow-ups.
+- **Won: make it an order** starts an order with the request's first line as the item still to hand over. The full request goes in the order's notes. Your next trade with them fills it in, as with any order.
 
 ## From lead to order
 

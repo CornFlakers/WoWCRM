@@ -883,16 +883,34 @@ function M.IsOpenOpportunity(o) return o ~= nil and OPEN_STAGE[o.stage] == true 
 
 function M.GetOpportunity(id) return findById(R().opportunities, id) end
 
--- f: contact (key), need, dir, stage, quote (copper), nextStep, due (time), notes, lead
+-- The price as typed: gold ("2g 50s") or anything else ("their mats + 50s tip").
+-- Returns the text, and the copper amount when the text is a plain gold amount.
+function M.ReadPrice(text)
+	text = U.Trim(text)
+	if text == "" then return nil, nil end
+	local copper = U.ParseMoney(text)
+	return text, (copper and copper > 0) and copper or nil
+end
+
+-- f: contact (key), need (the request, any number of lines), dir, stage, price (text) or
+--    quote (copper), nextStep, due (time), notes, lead
 function M.SaveOpportunity(id, f, now)
 	local key = f.contact and U.Trim(f.contact) or ""
 	if key == "" then return nil, "Who is it for? Type a name." end
 	local need = U.Trim(f.need)
-	if need == "" then return nil, "Write what they need." end
+	local existing = id and M.GetOpportunity(id)
+	local lead = f.lead or (existing and existing.lead)
+	if need == "" and not lead then return nil, "Write the request." end
 	local stage = f.stage or "new"
 	if not U.Contains(ns.OPP_STAGES, stage) then return nil, "Unknown stage." end
-	local quote = tonumber(f.quote)
-	if quote and quote <= 0 then quote = nil end
+	local priceText, quote
+	if f.price ~= nil then
+		priceText, quote = M.ReadPrice(f.price)
+	else
+		quote = tonumber(f.quote)
+		if quote and quote <= 0 then quote = nil end
+		priceText = quote and U.FormatMoney(quote) or nil
+	end
 	M.EnsureContact(key, now)
 	local o = id and M.GetOpportunity(id)
 	if not o then
@@ -902,10 +920,10 @@ function M.SaveOpportunity(id, f, now)
 	local wasOpen = M.IsOpenOpportunity(o) or o.stage == nil
 	o.contact, o.need, o.notes = key, need, f.notes or o.notes or ""
 	o.dir = f.dir == "mine" and "mine" or "theirs"
-	o.stage, o.quote = stage, quote
+	o.stage, o.quote, o.priceText = stage, quote, priceText
 	o.nextStep = U.Trim(f.nextStep or o.nextStep or "")
 	o.due = tonumber(f.due) or nil
-	o.lead = f.lead or o.lead
+	o.lead = lead
 	o.updated = now
 	if wasOpen and not OPEN_STAGE[stage] then o.closedAt = now end
 	if OPEN_STAGE[stage] then o.closedAt = nil end
@@ -915,6 +933,16 @@ end
 function M.DeleteOpportunity(id)
 	local _, i = M.GetOpportunity(id)
 	if i then table.remove(R().opportunities, i) end
+end
+
+-- A one-line name for lists: the request's first line, or what the lead said.
+function M.OpportunityTitle(o, max)
+	local first = U.Trim(((o.need or ""):match("[^\n]*")) or "")
+	if first == "" then
+		local lead = o.lead and M.GetLead(o.lead)
+		first = lead and ("\"" .. (lead.text or "") .. "\"") or "(no request written yet)"
+	end
+	return U.Shorten(first, max or 60)
 end
 
 -- Open ones first, the most overdue at the top; then the rest, newest first.
@@ -948,7 +976,8 @@ function M.DueOpportunities(now)
 	return n
 end
 
--- A lead's conversation written down as an opportunity: who, and what they said.
+-- A lead becomes an opportunity for the same person. The request starts empty: the whole
+-- conversation is shown beside it, so write down what they actually want.
 function M.LeadToOpportunity(leadId, now)
 	local lead = M.GetLead(leadId)
 	if not lead then return nil, "That lead no longer exists." end
@@ -956,7 +985,7 @@ function M.LeadToOpportunity(leadId, now)
 		if o.lead == lead.id and M.IsOpenOpportunity(o) then return o, nil, true end
 	end
 	return M.SaveOpportunity(nil, {
-		contact = lead.contact, need = U.Shorten(lead.text or "", 120), lead = lead.id,
+		contact = lead.contact, need = "", lead = lead.id,
 		dir = M.LeadKind(lead) == "buy" and "mine" or "theirs", stage = "new",
 	}, now)
 end
@@ -969,9 +998,14 @@ function M.OpportunityToOrder(id, now)
 	if o.order and M.GetOrder(o.order) then return M.GetOrder(o.order) end
 	if o.dir == "mine" then return nil, "This is something you need from them, so there is no order to make. Mark it won instead." end
 	local lead = o.lead and M.GetLead(o.lead)
+	local notes = {}
+	if U.Trim(o.need) ~= "" then notes[#notes + 1] = U.Trim(o.need) end
+	if o.priceText and not o.quote then notes[#notes + 1] = "Agreed: " .. o.priceText end
+	if U.Trim(o.notes) ~= "" then notes[#notes + 1] = U.Trim(o.notes) end
 	local ord = { id = M.NewId(), created = now, updated = now, contact = o.contact, type = "crafted", desc = "",
-		items = { { name = o.need, qty = 1, planned = true } }, received = {}, price = 0, notes = o.notes or "",
-		trades = 0, status = "quoted", quote = o.quote, lead = lead and lead.id or nil, opportunity = o.id }
+		items = { { name = M.OpportunityTitle(o, 60), qty = 1, planned = true } }, received = {}, price = 0,
+		notes = table.concat(notes, "\n"), trades = 0, status = "quoted", quote = o.quote,
+		lead = lead and lead.id or nil, opportunity = o.id }
 	if lead then
 		ord.post, ord.campaign, ord.sentAt = lead.post, lead.campaign, lead.sentAt
 		lead.status, lead.order = "won", ord.id
@@ -1418,7 +1452,7 @@ function M.Export()
 		for _, l in ipairs(o.received) do line("R", l.name, l.qty, l.value, l.kind, l.link) end
 	end
 	for _, o in ipairs(r.opportunities) do
-		line("Y", o.contact, o.need, o.dir, o.stage, o.quote, o.due, o.nextStep, o.notes, o.created)
+		line("Y", o.contact, U.Trim(o.need) ~= "" and o.need or M.OpportunityTitle(o, 200), o.dir, o.stage, o.quote, o.due, o.nextStep, o.notes, o.created, o.priceText)
 	end
 	return table.concat(out, "\n")
 end
@@ -1487,15 +1521,16 @@ function M.Import(text, now)
 					items = {}, received = {},
 				}
 			end
-		elseif kind == "Y" and f[2] and f[2] ~= "" and f[3] and f[3] ~= "" then
+		elseif kind == "Y" and f[2] and f[2] ~= "" and f[3] and (f[3] ~= "" or (f[11] or "") ~= "") then
 			local created = tonumber(f[10]) or now
 			local dupe = false
 			for _, o in ipairs(r.opportunities) do
 				if o.contact == f[2] and o.need == f[3] and o.created == created then dupe = true end
 			end
 			if not dupe then
-				local o = M.SaveOpportunity(nil, { contact = f[2], need = f[3], dir = f[4], stage = U.Contains(ns.OPP_STAGES, f[5]) and f[5] or "new",
-					quote = tonumber(f[6]), due = tonumber(f[7]), nextStep = f[8], notes = f[9] }, created)
+				local o = M.SaveOpportunity(nil, { contact = f[2], need = f[3] ~= "" and f[3] or "(request)", dir = f[4],
+					stage = U.Contains(ns.OPP_STAGES, f[5]) and f[5] or "new", price = blank(f[11] or "") or (tonumber(f[6]) and U.FormatMoney(tonumber(f[6]))) or "",
+					due = tonumber(f[7]), nextStep = f[8], notes = f[9] }, created)
 				if o then o.created = created; added.opportunities = added.opportunities + 1 end
 			end
 		elseif kind == "S" and pending then

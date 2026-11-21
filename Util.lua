@@ -12,7 +12,12 @@ ns.TARGET_LABEL = {
 ns.PUBLIC_TARGET = { SAY = true, YELL = true, GENERAL = true, TRADE = true }
 -- The channels the one-button cycle on the quick-post bar takes turns between, in order.
 ns.CYCLE_CHANNELS = { "GENERAL", "TRADE", "YELL" }
-ns.CONTACT_STATUS = { "lead", "customer", "repeat", "vip", "do not contact", "ignored" }
+ns.CONTACT_STATUS = { "lead", "customer", "repeat", "vip", "my character", "do not contact", "ignored" }
+-- Opportunities: a need written down before there is an order.
+ns.OPP_STAGES = { "new", "working", "quoted", "won", "lost" }
+ns.OPP_STAGE_LABEL = { new = "New", working = "Working", quoted = "Quoted", won = "Won", lost = "Lost" }
+ns.OPP_STAGE_COLOR = { new = "80c0ff", working = "ffd100", quoted = "ff9f40", won = "40ff40", lost = "888888" }
+ns.OPP_DIR_LABEL = { theirs = "They need it", mine = "I need it from them" }
 ns.ORDER_STATUS = { "quoted", "in progress", "delivered", "paid", "cancelled" }
 ns.ORDER_TYPE = { "crafted", "goods", "service" }
 -- What a post is for. Leads keep the purpose of the post they answered, so the Leads tab can

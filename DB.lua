@@ -52,12 +52,12 @@ MIGRATIONS[1] = function(saved)
 	end
 end
 
-local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates", "campaigns" }
+local LISTS = { "posts", "leads", "orders", "postLog", "mailLog", "mailTemplates", "campaigns", "opportunities" }
 
 -- Anything a person made: posts, contacts, leads, orders, campaigns or product prices.
 function DB.HasUserData(R)
 	if type(R) ~= "table" then return false end
-	for _, k in ipairs({ "posts", "leads", "orders", "campaigns" }) do
+	for _, k in ipairs({ "posts", "leads", "orders", "campaigns", "opportunities" }) do
 		if type(R[k]) == "table" and #R[k] > 0 then return true end
 	end
 	return (type(R.contacts) == "table" and next(R.contacts) ~= nil)

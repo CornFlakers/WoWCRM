@@ -577,6 +577,16 @@ AddTab("Leads", function(p, tab)
 			UI.Msg("You will be alerted when " .. Name(l.contact) .. " is online. The list is under /crm follow.")
 			ns.Changed()
 		end), p, X, -342),
+		At(Button(p, "Opportunity", 120, function()
+			local l = lead()
+			if not l then return end
+			local o, err, existing = M.LeadToOpportunity(l.id, U.Now())
+			if not o then UI.Msg(err, true) return end
+			if not existing then ns.Changed() end
+			UI.Show("Pipeline", o.id)
+			UI.Msg(existing and "This lead already has an open opportunity; here it is."
+				or "Opportunity started from the lead. Write down what they need, a quote and when to follow up, then Save.")
+		end), p, X + 194, -342),
 	}
 	toggle:SetScript("OnClick", function()
 		showClosed = not showClosed
@@ -696,6 +706,9 @@ AddTab("Contacts", function(p, tab)
 	local header = At(Label(p, "", "GameFontNormalLarge"), p, X, -2)
 	At(Label(p, "Status"), p, X, -32)
 	local status = At(Cycle(p, ns.CONTACT_STATUS, 130), p, X + 90, -28)
+	local oppBtn = At(Button(p, "+ Opportunity", 120, function()
+		if sel then UI.Show("Pipeline", { contact = sel }) end
+	end), p, X + 380, -28)
 	At(Label(p, "Tags"), p, X, -58)
 	local tags = At(Edit(p, 300), p, X + 94, -54)
 	At(Label(p, "Referred by"), p, X, -84)
@@ -793,10 +806,190 @@ AddTab("Contacts", function(p, tab)
 		local ltv, paid, all, ltvGold, ltvGoods = M.LTV(c.key)
 		local n, rev = M.Referrals(c.key)
 		local src = c.sourcePost and M.GetPost(c.sourcePost)
-		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s     Follow-ups sent: %d, last %s%s"):format(
+		local opps = M.Opportunities("open", c.key)
+		stats:SetText(("Lifetime value: |cffffd100%s|r   (%s gold + %s in goods, %d paid of %d orders)\nReferrals made: %d   Revenue from referrals: %s\nFirst seen: %s   Last contact: %s\nCame from post: %s     Follow-ups sent: %d, last %s%s%s"):format(
 			U.FormatMoney(ltv), U.FormatMoney(ltvGold), U.FormatMoney(ltvGoods), paid, all, n, U.FormatMoney(rev), When(c.firstSeen), When(c.lastContact), src and src.name or "-", c.outreach or 0, M.Ago(c.lastOutreach, U.Now()),
+			#opps > 0 and ("\n|cffffd100Open opportunities:|r " .. #opps .. " - " .. U.Shorten(opps[1].need, 50) .. (#opps > 1 and ", ..." or "")) or "",
 			c.followUp and ("\n|cffffd100Following up|r since " .. M.Ago(c.followUp.since, U.Now()) .. ((c.followUp.note or "") ~= "" and (": " .. c.followUp.note) or "")) or ""))
 	end
+end)
+
+-- ---------------------------------------------------------------- Pipeline (opportunities)
+-- What people need, written down before there is an order, and worked until it is won or lost.
+-- The person can be one of your own characters.
+
+AddTab("Pipeline", function(p, tab)
+	local sel, filter = nil, "open"
+	local DAY = 86400
+	local filterBtns = {}
+	local filters = { { "open", "Open" }, { "won", "Won" }, { "lost", "Lost" }, { "all", "All" } }
+	for i, f in ipairs(filters) do
+		filterBtns[f[1]] = At(Button(p, f[2], 70, function() filter = f[1]; tab.Refresh() end), p, (i - 1) * 71, 0)
+	end
+	local list = At(List(p, 330, 404, function(item) tab.Select(item.id) end), p, 0, -26)
+	local X = 344
+
+	At(Label(p, "For"), p, X, -4)
+	local who = At(Edit(p, 190), p, X + 70, 0)
+	At(Button(p, "Me", 44, function()
+		SetEdit(who, Name(M.me))
+	end), p, X + 266, 1)
+	At(Button(p, "Target", 62, function()
+		local n, second = UnitName("target")
+		if not n or not UnitIsPlayer("target") then UI.Msg("Target a player first.", true) return end
+		SetEdit(who, Name(M.JoinName(n, second)))
+	end), p, X + 312, 1)
+
+	At(Label(p, "Needs"), p, X, -30)
+	local need = At(Edit(p, 340), p, X + 70, -26)
+	linkEdits[#linkEdits + 1] = need
+	local dir = At(Button(p, "", 180), p, X, -52)
+	local dirSel = "theirs"
+	local function showDir() dir:SetText(ns.OPP_DIR_LABEL[dirSel]) end
+	dir:SetScript("OnClick", function() dirSel = dirSel == "theirs" and "mine" or "theirs"; showDir() end)
+	At(Label(p, "Stage", "GameFontHighlightSmall"), p, X + 192, -57)
+	local stage = At(Cycle(p, ns.OPP_STAGES, 100), p, X + 230, -52)
+
+	At(Label(p, "Quote"), p, X, -84)
+	local quote = At(Edit(p, 90), p, X + 70, -80)
+	At(Label(p, "Follow up in", "GameFontHighlightSmall"), p, X + 172, -84)
+	local days = At(Edit(p, 34), p, X + 252, -80)
+	local dueText = At(Label(p, "days", "GameFontHighlightSmall", 140), p, X + 292, -84)
+	At(Label(p, "Next step"), p, X, -110)
+	local nextStep = At(Edit(p, 340), p, X + 70, -106)
+	At(Label(p, "Notes"), p, X, -134)
+	local notes = At(MultiEdit(p, 420, 86), p, X, -150)
+	local info = At(Label(p, "", "GameFontHighlightSmall", 420), p, X, -244)
+
+	local function current() return sel and M.GetOpportunity(sel) end
+
+	local function load(o, contactKey)
+		sel = o and o.id or nil
+		SetEdit(who, o and Name(o.contact) or (contactKey and Name(contactKey)) or "")
+		SetEdit(need, o and o.need or "")
+		dirSel = o and o.dir or "theirs"
+		showDir()
+		stage:Set(o and o.stage or "new")
+		SetEdit(quote, o and o.quote and U.FormatMoney(o.quote) or "")
+		local left = o and o.due and math.max(0, math.ceil((o.due - U.Now()) / DAY))
+		SetEdit(days, left and tostring(left) or "")
+		SetEdit(nextStep, o and o.nextStep or "")
+		notes.edit:SetText(o and o.notes or "")
+	end
+
+	-- What is on screen, saved. Returns the opportunity, or nil after saying what is wrong.
+	local function save()
+		local key = U.Trim(who:GetText()) ~= "" and U.NormName(who:GetText(), DB.realm, true) or nil
+		local found = key and M.FindContact(who:GetText())
+		if found then key = found.key end
+		local q = U.Trim(quote:GetText())
+		local qv = q ~= "" and U.ParseMoney(q) or nil
+		if q ~= "" and not qv then UI.Msg("Quote not understood. Use a form like 2g 50s.", true) return end
+		local d = U.Trim(days:GetText())
+		local dn = d ~= "" and tonumber(d) or nil
+		if d ~= "" and not dn then UI.Msg("Follow up in: type a number of days.", true) return end
+		local old = current()
+		local due = dn and (U.Now() + math.floor(dn * DAY + 0.5)) or nil
+		-- Keep the exact follow-up time when the number of days was not changed.
+		if old and old.due and dn and dn == math.max(0, math.ceil((old.due - U.Now()) / DAY)) then due = old.due end
+		local o, err = M.SaveOpportunity(sel, {
+			contact = key, need = need:GetText(), dir = dirSel, stage = stage.value, quote = qv,
+			due = due, nextStep = nextStep:GetText(), notes = notes.edit:GetText(),
+		}, U.Now())
+		if not o then UI.Msg(err, true) return end
+		sel = o.id
+		if key == M.me then
+			local c = M.GetContact(key)
+			if c and c.status == "lead" then c.status = "my character" end
+		end
+		ns.Changed()
+		return o
+	end
+
+	At(Button(p, "Save", 90, function()
+		if save() then UI.Msg("Opportunity saved.") end
+	end), p, X, -296)
+	At(Button(p, "New", 70, function() load(nil); who:SetFocus(); tab.Refresh() end), p, X + 94, -296)
+	At(Button(p, "Delete", 70, function()
+		local o = current()
+		if not o then return end
+		ns.Confirm("Delete the opportunity \"" .. U.Shorten(o.need, 40) .. "\"?", function()
+			M.DeleteOpportunity(o.id)
+			load(nil)
+			ns.Changed()
+		end)
+	end), p, X + 168, -296)
+	local convert = At(Button(p, "Won: make it an order", 180, function()
+		local o = save()
+		if not o then return end
+		local ord, err = M.OpportunityToOrder(o.id, U.Now())
+		if not ord then UI.Msg(err, true) return end
+		ns.Changed()
+		UI.Show("Orders", ord.id)
+		UI.Msg("Order started for " .. Name(ord.contact) .. (ord.quote and (" at " .. U.FormatMoney(ord.quote)) or "")
+			.. ". Your next trade with them fills it in.")
+	end), p, X, -322)
+	At(Button(p, "Whisper", 80, function()
+		local o = current()
+		if o then Chat.Whisper(o.contact) end
+	end), p, X + 184, -322)
+	At(Button(p, "Open contact", 110, function()
+		local o = current()
+		if o then UI.Show("Contacts", o.contact) end
+	end), p, X + 268, -322)
+	At(Button(p, "Alert me when they are online", 240, function()
+		local o = save()
+		if not o then return end
+		M.SetFollowUp(o.contact, U.Shorten(o.need, 80), U.Now())
+		UI.WatchFollowUps()
+		UI.Msg("You will be alerted when " .. Name(o.contact) .. " is online. The list is under /crm follow.")
+		ns.Changed()
+	end), p, X, -348)
+	At(Label(p, "For your own characters too: pick Me, or type an alt's name.\nShift-click an item to link it in Needs.", "GameFontDisableSmall", 420), p, X, -380)
+
+	-- Select an opportunity id, or pass { contact = key } to start a new one for that person.
+	function tab.Select(arg)
+		if type(arg) == "table" then load(nil, arg.contact) else load(M.GetOpportunity(arg)) end
+		tab.Refresh()
+	end
+
+	function tab.Refresh()
+		if sel and not current() then load(nil) end
+		local now = U.Now()
+		for k, b in pairs(filterBtns) do if k == filter then b:LockHighlight() else b:UnlockHighlight() end end
+		local items = M.Opportunities(filter)
+		list:Set(items, function(o)
+			local late = M.IsOpenOpportunity(o) and o.due and o.due <= now
+			local who = U.Shorten((U.SplitKey(o.contact)), 16)
+			local mine = M.GetContact(o.contact) and M.GetContact(o.contact).status == "my character"
+			local left = (mine and "|cff80c0ff" or "|cffffd100") .. who .. "|r" .. (o.dir == "mine" and " |cff888888(I need)|r" or "")
+				.. ": " .. U.Shorten(o.need, 30)
+			local right = "|cff" .. ns.OPP_STAGE_COLOR[o.stage] .. ns.OPP_STAGE_LABEL[o.stage] .. "|r"
+			if M.IsOpenOpportunity(o) and o.due then
+				right = (late and "|cffff6060due|r " or (date("%b %d", math.floor(o.due)) .. " ")) .. right
+			end
+			return left, right
+		end, sel)
+		local o = current()
+		if o then convert:Enable() else convert:Disable() end
+		if o and o.dir == "mine" then convert:Disable() end
+		local d = tonumber(days:GetText())
+		dueText:SetText(d and ("days (" .. date("%b %d", math.floor(now + d * DAY)) .. ")") or "days")
+		if not o then
+			local due = M.DueOpportunities(now)
+			info:SetText((#items == 0 and filter == "open") and "Nothing open. Write down what someone needs: type who it is for and what they need, then Save.\nStart one from a lead (Opportunity on the Leads tab) or a contact."
+				or (due > 0 and ("|cffff6060" .. due .. " due for a follow-up.|r Select one to work it.") or "Select an opportunity, or press New."))
+			return
+		end
+		local order = o.order and M.GetOrder(o.order)
+		local lead = o.lead and M.GetLead(o.lead)
+		info:SetText(("Opened %s%s   Updated %s%s%s"):format(When(o.created), o.by and o.by ~= o.contact and (" by " .. U.Shorten((U.SplitKey(o.by)), 14)) or "",
+			When(o.updated),
+			lead and ("\nFrom a lead: \"" .. U.Shorten(lead.text or "", 50) .. "\"") or "",
+			order and ("\n|cff40ff40Order:|r " .. M.OrderTitle(order, 40) .. " - " .. order.status) or ""))
+	end
+	days:SetScript("OnTextChanged", function() if p:IsShown() and tab.Refresh then tab.Refresh() end end)
+	load(nil)
 end)
 
 -- ---------------------------------------------------------------- Orders
@@ -2045,7 +2238,7 @@ local function build()
 
 	for i, name in ipairs(tabOrder) do
 		local tab = tabs[name]
-		tab.button = At(Button(main, name, 84, function() UI.Show(name) end), main, 12 + (i - 1) * 86, -66)
+		tab.button = At(Button(main, name, 76, function() UI.Show(name) end), main, 12 + (i - 1) * 78, -66)
 		tab.panel = CreateFrame("Frame", nil, main)
 		tab.panel:SetPoint("TOPLEFT", 12, -98)
 		tab.panel:SetPoint("BOTTOMRIGHT", -12, 30)
@@ -2596,7 +2789,7 @@ end
 
 -- The tabs follow the funnel: campaign, post, lead, contact, order, follow-up, then the tools.
 do
-	local order = { "Campaigns", "Posts", "Leads", "Contacts", "Orders", "Mail", "Products", "Dashboard", "Options" }
+	local order = { "Campaigns", "Posts", "Leads", "Contacts", "Pipeline", "Orders", "Mail", "Products", "Dashboard", "Options" }
 	for i = #tabOrder, 1, -1 do tabOrder[i] = nil end
 	for i, n in ipairs(order) do tabOrder[i] = n end
 end

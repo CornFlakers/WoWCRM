@@ -1038,6 +1038,55 @@ do
 	eq(all > 1, true, "All lists every open lead again")
 end
 
+-- Pipeline: write down what someone needs (an alt too), work it, win it into an order
+do
+	UI.Show("Pipeline")
+	local pipe = UI.tabs.Pipeline.panel
+	local edits = kind("EditBox", pipe) -- for, needs, quote, days, next step, notes
+	click("Me", pipe)
+	eq(edits[1]:GetText(), "Seller", "Me fills in the character you are playing")
+	edits[1]:SetText("skotor ironmark")
+	edits[2]:SetText("5 silver")
+	edits[3]:SetText("50s")
+	edits[4]:SetText("2")
+	click("Save", pipe)
+	local opp
+	for _, o in ipairs(DB.R.opportunities) do if o.need == "5 silver" then opp = o end end
+	eq(opp ~= nil, true, "opportunity saved")
+	eq(opp.contact, "Skotor Ironmark-Stormrage", "a typed name becomes a contact")
+	eq(opp.quote, 5000, "quote saved")
+	eq(opp.due ~= nil and opp.due > clock, true, "follow-up date set")
+	local row
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.need == "5 silver" and w._shown and inside(w, pipe) then row = w end
+	end
+	eq(row ~= nil, true, "listed under Open")
+	click("Won: make it an order", pipe)
+	eq(opp.stage, "won", "won")
+	local ord = M.GetOrder(opp.order)
+	eq(ord and ord.quote, 5000, "order started at the quote")
+	eq(UI.tabs.Orders.panel._shown, true, "and opened on the Orders tab")
+
+	-- from the Leads tab
+	UI.Show("Leads")
+	local leadsPanel = UI.tabs.Leads.panel
+	local leadRow
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.contact and w.item.status == "open" and w._shown and inside(w, leadsPanel) then leadRow = w end
+	end
+	leadRow._scripts.OnClick(leadRow)
+	click("Opportunity", leadsPanel)
+	eq(UI.tabs.Pipeline.panel._shown, true, "a lead opens as an opportunity")
+	local fromLead
+	for _, o in ipairs(DB.R.opportunities) do if o.lead == leadRow.item.id then fromLead = o end end
+	eq(fromLead ~= nil, true, "with the lead remembered")
+
+	-- from a contact
+	UI.Show("Contacts", "Skotor Ironmark-Stormrage")
+	click("+ Opportunity", UI.tabs.Contacts.panel)
+	eq(kind("EditBox", UI.tabs.Pipeline.panel)[1]:GetText(), "Skotor Ironmark", "a contact starts an opportunity for them")
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,

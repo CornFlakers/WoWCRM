@@ -317,6 +317,7 @@ function M.DeleteContact(key)
 	r.contacts[key] = nil
 	for i = #r.leads, 1, -1 do if r.leads[i].contact == key then table.remove(r.leads, i) end end
 	for i = #r.orders, 1, -1 do if r.orders[i].contact == key then table.remove(r.orders, i) end end
+	for i = #r.opportunities, 1, -1 do if r.opportunities[i].contact == key then table.remove(r.opportunities, i) end end
 	for _, c in pairs(r.contacts) do if c.referredBy == key then c.referredBy = nil end end
 end
 
@@ -345,7 +346,7 @@ function M.JoinName(name, second, known)
 	return U.NormName(name .. " " .. second, DB.realm)
 end
 
-local STATUS_RANK = { lead = 1, customer = 2, ["repeat"] = 3, vip = 4, ["do not contact"] = 5, ignored = 6 }
+local STATUS_RANK = { lead = 1, customer = 2, ["repeat"] = 3, vip = 4, ["my character"] = 5, ["do not contact"] = 6, ignored = 7 }
 
 -- Contacts saved under a split name ("Rosa-Vell") are moved to the whole name
 -- ("Rosa Vell-<realm>"), merging with the contact from the whisper when there is one.
@@ -383,6 +384,7 @@ function M.RepairSplitNames()
 		r.contacts[old] = nil
 		for _, o in ipairs(r.orders) do if o.contact == old then o.contact = new end end
 		for _, l in ipairs(r.leads) do if l.contact == old then l.contact = new end end
+		for _, o in ipairs(r.opportunities) do if o.contact == old then o.contact = new end end
 		for _, m in ipairs(r.mailLog) do if m.contact == old then m.contact = new end end
 		for _, c in pairs(r.contacts) do if c.referredBy == old then c.referredBy = new end end
 		fixed = fixed + 1
@@ -864,6 +866,123 @@ function M.LeadToOrder(leadId, product, qty, now)
 	return o
 end
 
+-- ---------------------------------------------------------------- opportunities
+-- Something a person needs, written down before there is an order: "Skotor Ironmark needs
+-- 5 silver", "Rosa Vell wants a Red Mageweave Bag next week". It is worked (next step, follow-up
+-- date, a quote) until it is won, which can turn it into an order, or lost.
+--   dir      "theirs" = they need it (from you), "mine" = you need it from them
+--   stage    new, working, quoted, won, lost
+--   quote    the price you have offered (copper, optional)
+--   due      when to follow up next (time, optional); nextStep says what to do then
+-- The person can be one of your own characters: the address book is yours, so requests to and
+-- from your alts sit next to everyone else's.
+
+local OPEN_STAGE = { new = true, working = true, quoted = true }
+
+function M.IsOpenOpportunity(o) return o ~= nil and OPEN_STAGE[o.stage] == true end
+
+function M.GetOpportunity(id) return findById(R().opportunities, id) end
+
+-- f: contact (key), need, dir, stage, quote (copper), nextStep, due (time), notes, lead
+function M.SaveOpportunity(id, f, now)
+	local key = f.contact and U.Trim(f.contact) or ""
+	if key == "" then return nil, "Who is it for? Type a name." end
+	local need = U.Trim(f.need)
+	if need == "" then return nil, "Write what they need." end
+	local stage = f.stage or "new"
+	if not U.Contains(ns.OPP_STAGES, stage) then return nil, "Unknown stage." end
+	local quote = tonumber(f.quote)
+	if quote and quote <= 0 then quote = nil end
+	M.EnsureContact(key, now)
+	local o = id and M.GetOpportunity(id)
+	if not o then
+		o = { id = M.NewId(), created = now, by = M.me }
+		table.insert(R().opportunities, o)
+	end
+	local wasOpen = M.IsOpenOpportunity(o) or o.stage == nil
+	o.contact, o.need, o.notes = key, need, f.notes or o.notes or ""
+	o.dir = f.dir == "mine" and "mine" or "theirs"
+	o.stage, o.quote = stage, quote
+	o.nextStep = U.Trim(f.nextStep or o.nextStep or "")
+	o.due = tonumber(f.due) or nil
+	o.lead = f.lead or o.lead
+	o.updated = now
+	if wasOpen and not OPEN_STAGE[stage] then o.closedAt = now end
+	if OPEN_STAGE[stage] then o.closedAt = nil end
+	return o
+end
+
+function M.DeleteOpportunity(id)
+	local _, i = M.GetOpportunity(id)
+	if i then table.remove(R().opportunities, i) end
+end
+
+-- Open ones first, the most overdue at the top; then the rest, newest first.
+-- filter: "open", "won", "lost" or "all"; key: only this person's (optional).
+function M.Opportunities(filter, key)
+	local out = {}
+	for _, o in ipairs(R().opportunities) do
+		local open = M.IsOpenOpportunity(o)
+		local ok = filter == "all" or (filter == "open" and open) or (filter == o.stage)
+		if ok and (not key or o.contact == key) then out[#out + 1] = o end
+	end
+	table.sort(out, function(a, b)
+		local ao, bo = M.IsOpenOpportunity(a), M.IsOpenOpportunity(b)
+		if ao ~= bo then return ao end
+		if ao then
+			local ad, bd = a.due or math.huge, b.due or math.huge
+			if ad ~= bd then return ad < bd end
+		end
+		if (a.updated or 0) ~= (b.updated or 0) then return (a.updated or 0) > (b.updated or 0) end
+		return a.id > b.id
+	end)
+	return out
+end
+
+-- Open opportunities whose follow-up date has come.
+function M.DueOpportunities(now)
+	local n = 0
+	for _, o in ipairs(R().opportunities) do
+		if M.IsOpenOpportunity(o) and o.due and o.due <= now then n = n + 1 end
+	end
+	return n
+end
+
+-- A lead's conversation written down as an opportunity: who, and what they said.
+function M.LeadToOpportunity(leadId, now)
+	local lead = M.GetLead(leadId)
+	if not lead then return nil, "That lead no longer exists." end
+	for _, o in ipairs(R().opportunities) do
+		if o.lead == lead.id and M.IsOpenOpportunity(o) then return o, nil, true end
+	end
+	return M.SaveOpportunity(nil, {
+		contact = lead.contact, need = U.Shorten(lead.text or "", 120), lead = lead.id,
+		dir = M.LeadKind(lead) == "buy" and "mine" or "theirs", stage = "new",
+	}, now)
+end
+
+-- Won: an order to fill in, with what they need still to hand over at the quoted price.
+-- Only for what they need from you; something you need from them is simply marked won.
+function M.OpportunityToOrder(id, now)
+	local o = M.GetOpportunity(id)
+	if not o then return nil, "That opportunity no longer exists." end
+	if o.order and M.GetOrder(o.order) then return M.GetOrder(o.order) end
+	if o.dir == "mine" then return nil, "This is something you need from them, so there is no order to make. Mark it won instead." end
+	local lead = o.lead and M.GetLead(o.lead)
+	local ord = { id = M.NewId(), created = now, updated = now, contact = o.contact, type = "crafted", desc = "",
+		items = { { name = o.need, qty = 1, planned = true } }, received = {}, price = 0, notes = o.notes or "",
+		trades = 0, status = "quoted", quote = o.quote, lead = lead and lead.id or nil, opportunity = o.id }
+	if lead then
+		ord.post, ord.campaign, ord.sentAt = lead.post, lead.campaign, lead.sentAt
+		lead.status, lead.order = "won", ord.id
+	else
+		attribute(ord)
+	end
+	table.insert(R().orders, ord)
+	o.stage, o.order, o.updated, o.closedAt = "won", ord.id, now, now
+	return ord
+end
+
 -- Lifetime value: gold plus the value of goods received as payment, on paid orders.
 -- Returns total, paid count, total count, gold part, goods part.
 function M.LTV(key)
@@ -1298,6 +1417,9 @@ function M.Export()
 		for _, l in ipairs(o.items) do line("S", l.name, l.qty, l.link, l.planned and "planned" or nil) end
 		for _, l in ipairs(o.received) do line("R", l.name, l.qty, l.value, l.kind, l.link) end
 	end
+	for _, o in ipairs(r.opportunities) do
+		line("Y", o.contact, o.need, o.dir, o.stage, o.quote, o.due, o.nextStep, o.notes, o.created)
+	end
 	return table.concat(out, "\n")
 end
 
@@ -1310,7 +1432,7 @@ function M.Import(text, now)
 	local header = U.Trim(lines[1])
 	if header ~= HEADER and header ~= OLD_HEADER then return nil, "This is not WoW CRM export text." end
 	local old = header == OLD_HEADER
-	local added = { posts = 0, contacts = 0, orders = 0 }
+	local added = { posts = 0, contacts = 0, orders = 0, opportunities = 0 }
 	local postByName, referrers = {}, {}
 	for _, p in ipairs(r.posts) do postByName[p.name] = p end
 	local function blank(v) if v == "" then return nil end return v end
@@ -1364,6 +1486,17 @@ function M.Import(text, now)
 					created = tonumber(f[7]) or now, paidAt = tonumber(f[8]), notes = f[9], quote = tonumber(f[10]),
 					items = {}, received = {},
 				}
+			end
+		elseif kind == "Y" and f[2] and f[2] ~= "" and f[3] and f[3] ~= "" then
+			local created = tonumber(f[10]) or now
+			local dupe = false
+			for _, o in ipairs(r.opportunities) do
+				if o.contact == f[2] and o.need == f[3] and o.created == created then dupe = true end
+			end
+			if not dupe then
+				local o = M.SaveOpportunity(nil, { contact = f[2], need = f[3], dir = f[4], stage = U.Contains(ns.OPP_STAGES, f[5]) and f[5] or "new",
+					quote = tonumber(f[6]), due = tonumber(f[7]), nextStep = f[8], notes = f[9] }, created)
+				if o then o.created = created; added.opportunities = added.opportunities + 1 end
 			end
 		elseif kind == "S" and pending then
 			pending.items[#pending.items + 1] = { name = f[2], qty = f[3], link = blank(f[4]), planned = f[5] == "planned" or nil }

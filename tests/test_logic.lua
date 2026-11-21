@@ -1015,4 +1015,78 @@ do
 	fresh()
 end
 
+-- opportunities: a need written down before there is an order, for anyone, alts included
+do
+	fresh()
+	M.me = "Claire Paige-Stormrage"
+	local DAY = 86400
+	local o1, err = M.SaveOpportunity(nil, { contact = "Skotor Ironmark-Stormrage", need = "5 silver", due = 1000 + DAY }, 1000)
+	eq(err, nil, "saved")
+	eq(o1.stage, "new", "a new opportunity starts as new")
+	eq(o1.dir, "theirs", "and is something they need")
+	eq(DB.R.contacts["Skotor Ironmark-Stormrage"] ~= nil, true, "the person is added to contacts")
+	local o2 = M.SaveOpportunity(nil, { contact = M.me, need = "More Waylaid Crates for merchant favor", due = 1000 + 3600 }, 1000)
+	eq(o2.contact, "Claire Paige-Stormrage", "one for yourself")
+	local _, e1 = M.SaveOpportunity(nil, { contact = "", need = "x" }, 1000)
+	eq(e1 ~= nil, true, "needs a person")
+	local _, e2 = M.SaveOpportunity(nil, { contact = "A-Stormrage", need = "  " }, 1000)
+	eq(e2 ~= nil, true, "needs a need")
+	local _, e3 = M.SaveOpportunity(nil, { contact = "A-Stormrage", need = "x", stage = "maybe" }, 1000)
+	eq(e3 ~= nil, true, "stage must be known")
+
+	local open = M.Opportunities("open")
+	eq(#open, 2, "both open")
+	eq(open[1].id, o2.id, "the one due soonest comes first")
+	eq(M.DueOpportunities(1000 + 7200), 1, "one due after two hours")
+	eq(M.DueOpportunities(1000 + 2 * DAY), 2, "both due after two days")
+
+	local want = M.SaveOpportunity(nil, { contact = "Rosa Vell-Stormrage", need = "20 Linen Cloth", dir = "mine", stage = "working" }, 1100)
+	eq(want.dir, "mine", "something I need from them")
+	local _, why = M.OpportunityToOrder(want.id, 1200)
+	eq(why ~= nil, true, "no order for something I need from them")
+
+	M.SaveOpportunity(o1.id, { contact = o1.contact, need = o1.need, stage = "quoted", quote = 500 }, 1300)
+	eq(o1.stage, "quoted", "worked up to quoted")
+	local ord = M.OpportunityToOrder(o1.id, 1400)
+	eq(ord.contact, "Skotor Ironmark-Stormrage", "the order is for the same person")
+	eq(ord.quote, 500, "at the quoted price")
+	eq(ord.items[1].name, "5 silver", "what they need is still to hand over")
+	eq(ord.items[1].planned, true, "marked as still to hand over")
+	eq(o1.stage, "won", "the opportunity is won")
+	eq(o1.closedAt, 1400, "and closed")
+	eq(M.OpportunityToOrder(o1.id, 1500), ord, "converting twice gives the same order")
+	eq(#M.Opportunities("won"), 1, "listed under won")
+	eq(#M.Opportunities("open"), 2, "two still open")
+	M.SaveOpportunity(o1.id, { contact = o1.contact, need = o1.need, stage = "working" }, 1600)
+	eq(o1.closedAt, nil, "reopening clears the close date")
+
+	-- from a lead
+	M.SetTracking(true, 2000)
+	local post = M.SavePost(nil, "Bags", "WTS bags", { SAY = true }, M.me)
+	M.RecordSend(post, "SAY", 2000, "Barrens")
+	local lead = M.OnWhisper("Questy-Stormrage", "could you make me a bag next week?", 2010)
+	local fromLead = M.LeadToOpportunity(lead.id, 2020)
+	eq(fromLead.contact, "Questy-Stormrage", "a lead becomes an opportunity for that person")
+	eq(fromLead.need, "could you make me a bag next week?", "with what they said")
+	local again, _, existing = M.LeadToOpportunity(lead.id, 2030)
+	eq(again, fromLead, "the same lead gives the same open opportunity")
+	eq(existing, true, "and says so")
+	local lord = M.OpportunityToOrder(fromLead.id, 2040)
+	eq(lord.lead, lead.id, "the order remembers the lead")
+	eq(lord.post, post.id, "and the post that brought them")
+	eq(lead.status, "won", "the lead is won too")
+
+	-- backups keep them; deleting a contact removes theirs
+	local dump = M.Export()
+	eq(dump:find("Y\tRosa Vell-Stormrage\t20 Linen Cloth", 1, true) ~= nil, true, "exported")
+	fresh()
+	local added = M.Import(dump, 3000)
+	eq(added.opportunities, 4, "imported")
+	eq(M.Import(dump, 3000).opportunities, 0, "importing twice adds nothing")
+	M.DeleteContact("Rosa Vell-Stormrage")
+	eq(#M.Opportunities("all"), 3, "deleting a contact removes their opportunities")
+	eq(U.Contains(ns.CONTACT_STATUS, "my character") ~= nil, true, "contacts can be marked as your own characters")
+	M.me = "Me-Stormrage"
+end
+
 print(("test_logic: %d checks passed"):format(count))

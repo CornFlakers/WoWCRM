@@ -1894,7 +1894,7 @@ AddTab("Products", function(page, tab)
 		if not (UnitExists and UnitExists("target") and UnitIsPlayer and UnitIsPlayer("target")) then return nil end
 		local name = UnitName("target")
 		if type(name) ~= "string" then return nil end
-		local lvl = UnitLevel and tonumber(UnitLevel("target"))
+		local lvl = UnitLevel and U.Plain(UnitLevel("target"))
 		return name, (lvl and lvl > 0) and lvl or nil
 	end
 

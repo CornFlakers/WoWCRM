@@ -1133,6 +1133,22 @@ do
 	M.DeleteOpportunity(opp.id)
 end
 
+-- values the game hides from add-ons, and events this client does not have, cause no errors
+do
+	speed = SECRET
+	clock = clock + 5
+	local ok, err = pcall(ns.eventFrame._scripts.OnUpdate, ns.eventFrame, 3)
+	eq(ok, true, "a hidden movement speed is ignored, not compared: " .. tostring(err))
+	speed = 0
+	eq(U.Plain(SECRET), nil, "a hidden value reads as unknown")
+	eq(U.Plain(12), 12, "a plain number reads as itself")
+	local real = ns.eventFrame.RegisterEvent
+	ns.eventFrame.RegisterEvent = function(_, e) if e == "NOT_ON_THIS_CLIENT" then error("Attempt to register unknown event") end end
+	ok = pcall(ns.On, "NOT_ON_THIS_CLIENT", function() end)
+	ns.eventFrame.RegisterEvent = real
+	eq(ok, true, "an event this client does not have is skipped")
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,

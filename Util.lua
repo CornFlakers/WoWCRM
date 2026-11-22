@@ -31,6 +31,15 @@ ns.KIND_HINT = {
 }
 ns.KIND_COLOR = { sell = "ffd100", buy = "80c0ff", group = "40ff40" }
 
+-- A number the game hands an add-on, or nil when it is hidden ("secret") or not a number.
+-- This client hides some values from add-ons (your speed, a target's level) at times, and
+-- comparing a hidden value is an error.
+function U.Plain(v)
+	local secret = rawget(_G, "issecretvalue")
+	if secret and secret(v) then return nil end
+	return type(v) == "number" and v or nil
+end
+
 function U.Now()
 	local f = rawget(_G, "time") or os.time
 	return f()

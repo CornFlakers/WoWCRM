@@ -190,7 +190,8 @@ function ns.On(event, fn)
 		handlers[event] = function(...) old(...); fn(...) end
 	else
 		handlers[event] = fn
-		frame:RegisterEvent(event)
+		-- Some events exist only on some clients (CRAFT_SHOW is gone from this one).
+		pcall(frame.RegisterEvent, frame, event)
 	end
 end
 
@@ -207,7 +208,8 @@ do
 		if elapsed < 2 then return end
 		elapsed = 0
 		if not ns.ready then return end
-		if GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0 then lastMoved = U.Now() end
+		local speed = GetUnitSpeed and U.Plain(GetUnitSpeed("player"))
+		if speed and speed > 0 then lastMoved = U.Now() end
 		updateSaveButton()
 	end)
 end

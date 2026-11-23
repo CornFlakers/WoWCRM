@@ -177,7 +177,7 @@ for line in TOC_TEXT:gmatch("[^\r\n]+") do
 	line = line:gsub("%s+$", "")
 	if line ~= "" and not line:match("^#") then files[#files + 1] = line end
 end
-assert(#files == 14, "TOC should list 14 files, found " .. #files)
+assert(#files >= 25, "TOC should list WoW CRM's 15 files and the bundled buff tool, found " .. #files)
 local globalsBefore = { codAmount = true }
 for k in pairs(_G) do globalsBefore[k] = true end
 for _, f in ipairs(files) do assert(loadfile(f))("WoWCRM", ns) end
@@ -1149,17 +1149,49 @@ do
 	eq(ok, true, "an event this client does not have is skipped")
 end
 
+-- the bundled buff reminders: on by default, said once, switched off and on from Options
+do
+	local BT = ns.BuffTool
+	eq(BT ~= nil, true, "the buff tool is bundled")
+	eq(BT.ready, true, "and running after login")
+	eq(DB.settings.buffToolAsked, true, "the one-time notice was shown")
+	eq(StaticPopupDialogs.WOWCRM_BUFFTOOL.text, "%s", "the notice is a normal popup")
+	eq(StaticPopupDialogs.WOWCRM_BUFFTOOL.button2, "Turn it off", "with a button to switch it off")
+	local strip = rawget(_G, "WoWCRMBuffsReminders")
+	eq(strip ~= nil, true, "the reminder strip exists")
+	DB.settings.buffTool = false
+	ns.BuffToolApply()
+	eq(BT.ready, false, "switched off")
+	eq(strip._shown, false, "its reminders are hidden")
+	BT.Dirty()
+	clock = clock + 10
+	local ok = pcall(BT.eventFrame._scripts.OnEvent, BT.eventFrame, "BAG_UPDATE")
+	eq(ok, true, "while off, events do nothing")
+	DB.settings.buffTool = true
+	ns.BuffToolApply()
+	eq(BT.ready, true, "switched back on")
+	local printedBefore = #printed
+	SlashCmdList.WOWCRM("buffs check")
+	eq(#printed > printedBefore, true, "/crm buffs reaches the buff tool")
+	local wrong
+	for _, m in ipairs(printed) do if tostring(m):find("something went wrong", 1, true) then wrong = m end end
+	eq(wrong, nil, "the buff tool ran inside WoW CRM without errors")
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,
 	SLASH_WOWCRM1 = true, SLASH_WOWCRM2 = true,
 	WoWCRMScanTooltip = true, -- hidden tooltip used to read bag sizes
 	WoWCRMMinimapButton = true,
+	WoWCRMBuffsDB = true, SLASH_WOWCRMBUFFS1 = true, -- the bundled buff reminders
+	WoWCRMBuffsReminders = true, WoWCRMBuffsRemindersHead = true, WoWCRMBuffsSnooze = true, WoWCRMBuffsCampRow = true,
+	WoWCRMBuffsGetHead = true, WoWCRMBuffsFrame = true, WoWCRMBuffsScroll = true, WoWCRMBuffsScanTip = true,
 	TradeSkillFrame = true, ProfessionsFrame = true, -- the stand-in profession windows made by this test
 }
 for i = 1, 8 do allowed["TradeSkillReagent" .. i] = true end
 for k in pairs(_G) do
-	if not globalsBefore[k] and not allowed[k] then error("unexpected global: " .. tostring(k)) end
+	if not globalsBefore[k] and not allowed[k] and not tostring(k):match("^WoWCRMBuffs") then error("unexpected global: " .. tostring(k)) end
 end
 count = count + 1
 

@@ -4,5 +4,6 @@ ignore:
   - tests
   - SPEC.md
   - art
+  - tools
   - .github
   - .gitignore

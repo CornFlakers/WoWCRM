@@ -4,7 +4,7 @@
 ## OptionalDeps: Mastercraft, Auctionator, TradeSkillMaster, BagBrother, Questie
 ## Version: @project-version@
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
-## SavedVariables: WoWCRMDB
+## SavedVariables: WoWCRMDB, WoWCRMBuffsDB
 ## AddonCompartmentFunc: WoWCRM_OnCompartmentClick
 ## X-License: MIT
 ## X-Curse-Project-ID: 1818127
@@ -23,3 +23,14 @@ Mail.lua
 UI.lua
 Sources.lua
 Reagents.lua
+Buffs\Data.lua
+Buffs\Guide.lua
+Buffs\Stock.lua
+Buffs\Howto.lua
+Buffs\Spec.lua
+Buffs\Buffs.lua
+Buffs\Camp.lua
+Buffs\Game.lua
+Buffs\Core.lua
+Buffs\UI.lua
+BuffBridge.lua

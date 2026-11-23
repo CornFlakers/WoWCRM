@@ -33,6 +33,8 @@ local DEFAULTS = {
 	productsView = "catalog", -- the Products tab shows the full recipe list ("catalog") or the bag offers ("offers")
 	offerText = "",       -- the bag offer line; empty uses the built-in wording (ns.Offers.DEFAULT_TEXT)
 	offerTip = 20,        -- percent added on top of thread and dye in a bag offer
+	buffTool = true,      -- buff reminders (bundled from WoW Utils)
+	buffToolAsked = false, -- the one-time "this is here, you can switch it off" notice was shown
 }
 DB.MIN_GAP_FLOOR = 30
 

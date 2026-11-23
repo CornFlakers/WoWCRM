@@ -298,6 +298,8 @@ SlashCmdList["WOWCRM"] = function(msg)
 		ns.Notify()
 	elseif cmd == "probe" then
 		ns.Chat.Probe()
+	elseif cmd == "buffs" then
+		ns.BuffToolSlash(rest)
 	elseif cmd == "follow" then
 		ns.UI.ToggleFollowUps()
 	elseif cmd == "watch" then

@@ -122,6 +122,14 @@ An **opportunity** is a need written down: *Skotor Ironmark needs 5 silver*, *Cl
 - **Trades follow the Opty.** When someone with an open Opty trades you materials, WoW CRM asks *"Are these for their Opty?"*. Yes logs them on the Opty and no order is made yet. When you hand over the goods, it offers to **Deliver the Opty**: that logs the order, with their materials as supplied and the gold they paid. **Not for it** goes to the usual order question.
 - **Won: make it an order** starts an order with the request's first line as the item still to hand over. The full request goes in the order's notes. Your next trade with them fills it in, as with any order.
 
+## Buff reminders
+
+WoW CRM includes the buff reminders from the creator's **WoW Utils** add-on: a strip that pops up when you are missing a weapon stone, food, tracking (Find Minerals, Find Herbs), elixirs or camp buffs, says where to find what you need (bags, bank, other characters), and lists what is worth getting.
+
+It's a tool the creator found helpful; plenty of other add-ons do the same. It is on by default, says so once when you first log in, and can be switched off any time in **Options > Buff reminders**. `/crm buffs` opens it; `/crm buffs help` lists its commands. If the standalone WoW Utils add-on is enabled, WoW CRM leaves the reminders to it so they never show twice.
+
+For developers: the files in `Buffs/` are copied from the WoW Utils project by `python tools/sync_buffs.py`. Change WoW Utils, then sync; don't edit `Buffs/` directly.
+
 ## From lead to order
 
 **One person, one lead.** A whisper joins the person's open lead whatever post it was about, so answering two of your posts, or chatting on after you posted again, no longer makes a second lead. Whispers within 12 hours of their last one also join it, even after it became an order. Leads split by older versions are folded into one at login.

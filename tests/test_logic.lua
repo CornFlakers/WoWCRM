@@ -1152,4 +1152,61 @@ do
 	eq(M.OpenOpportunityFor("Mia-Stormrage"), nil, "a won Opty no longer catches trades")
 end
 
+-- services: portals, summons, lockpicking, enchants
+do
+	fresh()
+	eq(M.ServiceForSpell("Pick Lock"), "Lockpicking", "picking a lock is lockpicking")
+	eq(select(2, M.ServiceForSpell("Pick Lock")), true, "done through the trade window")
+	eq(M.ServiceForSpell("Enchant Bracer - Minor Stamina"), "Enchant Bracer - Minor Stamina", "an enchant is named after itself")
+	eq(M.ServiceForSpell("Portal: Orgrimmar"), "Portal: Orgrimmar", "a portal")
+	eq(select(2, M.ServiceForSpell("Portal: Orgrimmar")), false, "not through the trade window")
+	eq(M.ServiceForSpell("Ritual of Summoning"), "Summon", "a summon")
+	eq(M.ServiceForSpell("Fireball"), nil, "not a service")
+	eq(M.ServiceForSpell(nil), nil, "nothing")
+
+	local s = M.SaveService(nil, "Lockpicking", 0)
+	eq(s.price, nil, "no price: tips")
+	M.SaveService(nil, "Portal", 5000)
+	local _, clash = M.SaveService(nil, "Portal", 1)
+	eq(clash ~= nil, true, "the same service twice is refused")
+	eq(M.GetService("Portal").price, 5000, "priced")
+	local _, empty = M.SaveService(nil, "  ", 1)
+	eq(empty ~= nil, true, "a service needs a name")
+	M.SaveService("Portal", "Portals", 6000)
+	eq(M.GetService("Portal"), nil, "renamed")
+	eq(M.GetService("Portals").price, 6000, "with its new price")
+	M.SaveService("Portals", "Portal", 6000)
+	local picks = {}
+	for _, c in ipairs(M.ProductChoices(nil)) do picks[c.name] = c end
+	eq(picks.Portal and picks.Portal.service, true, "services can be picked wherever products are")
+
+	local o = M.RecordService("Thief-Stormrage", "Lockpicking", "Iron Lockbox", { gold = 500 }, 1000)
+	eq(o.desc, "Lockpicking: Iron Lockbox", "named after what was done")
+	eq(o.type, "service", "a service order")
+	eq(o.status, "paid", "tipped, so paid")
+	eq(o.price, 500, "with the tip")
+	eq(DB.R.contacts["Thief-Stormrage"] ~= nil, true, "the customer is a contact")
+	local free = M.RecordService("Thief-Stormrage", "Lockpicking", "Heavy Junkbox", {}, 1010)
+	eq(free.status, "delivered", "no tip: delivered")
+	local ench = M.RecordService("Knight-Stormrage", "Enchant Bracer - Minor Stamina", "Bracers",
+		{ gold = 2000, received = { { name = "Strange Dust", qty = 3, value = 100 } } }, 1020)
+	eq(ench.received[1].kind, "mats", "materials they gave for an enchant are recorded as supplied")
+	eq(select(1, M.ServiceStats("Lockpicking")), 2, "two locks picked")
+	eq(select(2, M.ServiceStats("Lockpicking")), 500, "500 copper earned")
+
+	M.LogServiceCast("Portal: Orgrimmar", 2000, nil)
+	eq(M.RecentServiceCast(2100, 600).name, "Portal: Orgrimmar", "a recent portal is remembered")
+	eq(M.RecentServiceCast(2700, 600), nil, "not after 10 minutes")
+	local p1 = M.RecordService("Traveller-Stormrage", "Portal: Orgrimmar", nil, { gold = 6000 }, 2100)
+	eq(p1.desc, "Portal: Orgrimmar", "a portal order")
+	eq(select(1, M.ServiceStats("Portal")), 1, "counted under Portal")
+
+	local opp = M.SaveOpportunity(nil, { contact = "Traveller-Stormrage", need = "a summon to Ironforge" }, 3000)
+	M.SetOpportunityItem(opp.id, { key = "service:Summon", name = "Summon" }, 1, 3000)
+	local sum = M.RecordService("Traveller-Stormrage", "Summon", "Traveller", { gold = 3000 }, 3100)
+	eq(opp.stage, "won", "a service order wins the Opty for that service")
+	eq(sum.opportunity, opp.id, "and is linked to it")
+	eq(DB.HasUserData({ services = { {} } }), true, "a services list is your data")
+end
+
 print(("test_logic: %d checks passed"):format(count))

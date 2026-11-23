@@ -1096,13 +1096,16 @@ AddTab("Opty", function(p, tab)
 		if chosen then
 			local recipe, list = RecipeByName(chosen.name)
 			local sheetOpp = { qty = tonumber(qtyBox:GetText()) or 1, mats = o and o.mats or nil }
-			local each = DB.R.products[chosen.key] and tonumber(DB.R.products[chosen.key].price) or nil
+			local each = chosen.service and (chosen.price > 0 and chosen.price or nil)
+				or (DB.R.products[chosen.key] and tonumber(DB.R.products[chosen.key].price) or nil)
 			local s = M.OpportunitySheet(sheetOpp, recipe, ns.Offers.Index(list), SheetPrice, Price.ItemName, each)
 			local qty = math.max(1, sheetOpp.qty)
 			local L = {}
 			L[#L + 1] = s.each and ("%dx %s at %s = |cffffd100%s|r"):format(qty, chosen.name, U.FormatMoney(s.each), U.FormatMoney(s.base))
 				or ("%dx %s, priced at its materials: |cffffd100%s|r"):format(qty, chosen.name, U.FormatMoney(s.base))
-			if not recipe then
+			if chosen.service then
+				L[#L + 1] = "|cff888888A service: nothing to make. " .. (s.each and "" or "No price set, so tips.") .. "|r"
+			elseif not recipe then
 				L[#L + 1] = "|cff888888Recipe not found in Mastercraft's scan, so the materials are unknown.|r"
 			else
 				local need, have = {}, {}
@@ -1596,11 +1599,17 @@ AddTab("Products", function(page, tab)
 	p:SetAllPoints(page)
 	local of = CreateFrame("Frame", nil, page)
 	of:SetAllPoints(page)
+	local sv = CreateFrame("Frame", nil, page)
+	sv:SetAllPoints(page)
 	local catalogRefresh, offersRefresh
-	At(Button(p, "Bag offers", 120, function()
+	At(Button(p, "Offers", 58, function()
 		DB.settings.productsView = "offers"
 		tab.Refresh()
 	end), p, 652, 0)
+	At(Button(p, "Services", 64, function()
+		DB.settings.productsView = "services"
+		tab.Refresh()
+	end), p, 712, 0)
 
 	local sel
 	local prof = At(DynCycle(p, 130, function() sel = nil; tab.Refresh() end), p, 0, 0)
@@ -1841,7 +1850,8 @@ AddTab("Products", function(page, tab)
 	-- Pick a bag, press Post: the offer goes into the chat box for you to read, change and send.
 	local O = ns.Offers
 	local offerSel
-	At(Label(of, "Bag offers: they bring the cloth, you make it on the spot", "GameFontNormal", 520), of, 4, -4)
+	At(Label(of, "Bag offers: they bring the cloth, you make it on the spot", "GameFontNormal", 500), of, 4, -4)
+	At(Button(of, "Services", 120, function() DB.settings.productsView = "services"; tab.Refresh() end), of, 528, 0)
 	At(Button(of, "All recipes", 120, function()
 		DB.settings.productsView = "catalog"
 		tab.Refresh()
@@ -2011,12 +2021,80 @@ AddTab("Products", function(page, tab)
 		offerDetail:SetText(table.concat(L, "\n"))
 	end
 
+	-- ------------------------------------------------ services
+	-- Portals, summons, lockpicking, enchants: what you do for people, at your usual price.
+	local svcSel
+	At(Label(sv, "Services: portals, summons, lockpicking, enchants", "GameFontNormal", 400), sv, 4, -4)
+	At(Button(sv, "Bag offers", 120, function() DB.settings.productsView = "offers"; tab.Refresh() end), sv, 528, 0)
+	At(Button(sv, "All recipes", 120, function() DB.settings.productsView = "catalog"; tab.Refresh() end), sv, 652, 0)
+	local loadService
+	local svcList = At(List(sv, 400, 300, function(item) loadService(M.GetService(item.name)); tab.Refresh() end), sv, 0, -26)
+	local SX = 416
+	At(Label(sv, "Service"), sv, SX, -30)
+	local svcName = At(Edit(sv, 240), sv, SX + 60, -26)
+	At(Label(sv, "Price"), sv, SX, -58)
+	local svcPrice = At(Edit(sv, 100), sv, SX + 60, -54)
+	At(Label(sv, "blank = tips welcome", "GameFontDisableSmall", 140), sv, SX + 168, -58)
+	function loadService(s)
+		svcSel = s and s.name or nil
+		SetEdit(svcName, s and s.name or "")
+		SetEdit(svcPrice, s and s.price and U.FormatMoney(s.price) or "")
+	end
+	At(Button(sv, "Save", 80, function()
+		local ptext = U.Trim(svcPrice:GetText())
+		local price = ptext ~= "" and U.ParseMoney(ptext) or 0
+		if not price then UI.Msg("Price not understood. Use a form like 1g 50s, or leave it blank.", true) return end
+		local s, err = M.SaveService(svcSel, svcName:GetText(), price)
+		if not s then UI.Msg(err, true) return end
+		svcSel = s.name
+		UI.Msg(s.name .. " saved. It can now be picked on an Opty and when a lead becomes an order.")
+		ns.Changed()
+	end), sv, SX, -84)
+	At(Button(sv, "New", 60, function() loadService(nil); svcName:SetFocus(); tab.Refresh() end), sv, SX + 84, -84)
+	At(Button(sv, "Delete", 70, function()
+		if not svcSel then return end
+		local name = svcSel
+		ns.Confirm("Remove " .. name .. " from your services? Orders already logged stay.", function()
+			M.DeleteService(name)
+			loadService(nil)
+			ns.Changed()
+		end)
+	end), sv, SX + 148, -84)
+	At(Button(sv, "Add my class's usual services", 240, function()
+		local _, class = UnitClass("player")
+		local list = M.CLASS_SERVICES[class or ""] or {}
+		local added = {}
+		for _, name in ipairs(list) do
+			if not M.GetService(name) then M.SaveService(nil, name, 0); added[#added + 1] = name end
+		end
+		UI.Msg(#added > 0 and ("Added: " .. table.concat(added, ", ") .. ". Set a price, or leave it blank for tips.")
+			or (#list > 0 and "Your class's usual services are already on the list." or "Nothing usual for your class. Type a service and Save."))
+		if #added > 0 then ns.Changed() end
+	end), sv, SX, -118)
+	At(Label(sv, "How they are logged:\n\n"
+		.. "|cffffd100Lockpicking and enchants|r: the customer puts the item in their \"Will not be traded\" slot, you pick the lock or cast the enchant, the trade completes. WoW CRM logs it by itself, with any tip and any materials they gave.\n\n"
+		.. "|cffffd100Portals and summons|r: cast it, then when someone trades you gold in the next 10 minutes WoW CRM asks whether it was payment. Each payer gets their own order.\n\n"
+		.. "A service whose name starts an order's name counts it: Portal counts Portal: Orgrimmar and Portal: Undercity.",
+		"GameFontHighlightSmall", 350), sv, SX, -150)
+
+	local function servicesRefresh()
+		local items = {}
+		for _, s in ipairs(M.Services()) do items[#items + 1] = { id = s.name, name = s.name, price = s.price } end
+		svcList:Set(items, function(s)
+			local n, earned = M.ServiceStats(s.name)
+			return s.name, (s.price and U.FormatMoney(s.price) or "tips") .. "    |cff888888done " .. n .. ", earned " .. U.FormatMoney(earned) .. "|r"
+		end, svcSel)
+	end
+
 	function tab.Refresh()
 		if DB.settings.productsView == "offers" then
-			p:Hide(); of:Show()
+			p:Hide(); sv:Hide(); of:Show()
 			offersRefresh()
+		elseif DB.settings.productsView == "services" then
+			p:Hide(); of:Hide(); sv:Show()
+			servicesRefresh()
 		else
-			of:Hide(); p:Show()
+			of:Hide(); sv:Hide(); p:Show()
 			catalogRefresh()
 		end
 	end

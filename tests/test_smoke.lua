@@ -1178,6 +1178,85 @@ do
 	eq(wrong, nil, "the buff tool ran inside WoW CRM without errors")
 end
 
+-- services through trades: a lock picked in "Will not be traded" is logged by itself;
+-- after a portal, a gold trade is asked about
+do
+	local realLink, realInfo = GetTradeTargetItemLink, GetTradeTargetItemInfo
+	local locked -- { name, enchant } in their "Will not be traded" slot
+	GetTradeTargetItemLink = function(i)
+		if i == 7 and locked then return "|cffffffff|Hitem:4633::::::::|h[" .. locked[1] .. "]|h|r" end
+		return realLink(i)
+	end
+	GetTradeTargetItemInfo = function(i)
+		if i == 7 and locked then return locked[1], nil, 1, 1, true, locked[2] end
+		return realInfo(i)
+	end
+	local SPELLS = { [1804] = "Pick Lock", [10059] = "Portal: Stormwind", [698] = "Ritual of Summoning", [133] = "Fireball" }
+	GetSpellInfo = function(id) return SPELLS[id] end
+	local function cast(id) fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", id) end
+
+	npcName, npcSecond = "Thief", nil
+	local orders = #DB.R.orders
+	locked = { "Iron Lockbox" }
+	tGive, tGet, tGold = nil, nil, 500
+	fire("TRADE_SHOW")
+	cast(1804)
+	fire("TRADE_ACCEPT_UPDATE", 1, 1)
+	fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
+	eq(#DB.R.orders, orders + 1, "the picked lock is logged with no question")
+	local o = DB.R.orders[#DB.R.orders]
+	eq(o.desc, "Lockpicking: Iron Lockbox", "as lockpicking on their box")
+	eq(o.price, 500, "with the tip")
+	eq(o.contact, "Thief-Stormrage", "for the right person")
+
+	-- the game names what was done even if the spell went unseen
+	locked = { "Bracers of the Bear", "Enchant Bracer - Minor Stamina" }
+	tGold = 2000
+	fire("TRADE_SHOW")
+	fire("TRADE_ACCEPT_UPDATE", 1, 1)
+	fire("UI_INFO_MESSAGE", LE_GAME_ERR_TRADE_COMPLETE, "Trade complete.")
+	eq(DB.R.orders[#DB.R.orders].desc, "Enchant Bracer - Minor Stamina: Bracers of the Bear", "an enchant through the trade window")
+	locked = nil
+
+	-- a portal, then someone pays
+	npcName = "Traveller"
+	cast(10059)
+	eq(DB.R.serviceLog[#DB.R.serviceLog].name, "Portal: Stormwind", "the portal cast is remembered")
+	orders = #DB.R.orders
+	doTrade(nil, nil, 1500)
+	o = DB.R.orders[#DB.R.orders]
+	eq(#DB.R.orders, orders + 1, "the payment is logged")
+	eq(o.desc, "Portal: Stormwind", "as the portal")
+	eq(o.price, 1500, "for what they paid")
+	clock = clock + 700
+	local function portals()
+		local n = 0
+		for _, x in ipairs(DB.R.orders) do if x.desc == "Portal: Stormwind" then n = n + 1 end end
+		return n
+	end
+	doTrade(nil, nil, 100)
+	eq(portals(), 1, "after 10 minutes, gold is not taken as payment for another portal")
+
+	-- the Services view
+	UI.Show("Products")
+	DB.settings.productsView = "services"
+	UnitClass = function() return "Rogue", "ROGUE" end
+	UI.Refresh()
+	click("Add my class's usual services", UI.tabs.Products.panel)
+	eq(M.GetService("Lockpicking") ~= nil, true, "a rogue gets Lockpicking on the list")
+	UI.Refresh()
+	local shown
+	for _, w in ipairs(widgets) do
+		if type(w.item) == "table" and w.item.name == "Lockpicking" and w._shown and inside(w, UI.tabs.Products.panel) then shown = w end
+	end
+	eq(shown ~= nil, true, "listed")
+	eq(shown.right:GetText():find("done 1", 1, true) ~= nil, true, "with the lock already picked")
+	DB.settings.productsView = "catalog"
+
+	GetTradeTargetItemLink, GetTradeTargetItemInfo, GetSpellInfo, UnitClass = realLink, realInfo, nil, nil
+	npcName, npcSecond = "Buyer", nil
+end
+
 -- the add-on must not leak names into the game's shared global space
 local allowed = {
 	WoWCRMDB = true, WoWCRMFrame = true, WoWCRMSaveButton = true, WoWCRM_OnCompartmentClick = true,

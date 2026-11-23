@@ -843,6 +843,9 @@ function M.ProductChoices(priceOf)
 			out[#out + 1] = { key = key, name = p.name, output = p.output, price = price, mine = p.price ~= nil }
 		end
 	end
+	for _, s in ipairs(R().services) do
+		out[#out + 1] = { key = "service:" .. s.name, name = s.name, price = s.price or 0, mine = s.price ~= nil, service = true }
+	end
 	table.sort(out, function(a, b) return a.name < b.name end)
 	return out
 end
@@ -1367,6 +1370,119 @@ function M.SoldCounts()
 		end
 	end
 	return out
+end
+
+-- ---------------------------------------------------------------- services
+-- Things you do for people rather than make: portals, summons, lockpicking, enchants. A
+-- service has a name and a usual price. Service orders are named after what was done
+-- ("Lockpicking: Iron Lockbox", "Portal: Orgrimmar"); a service counts every order whose name
+-- starts with its own name.
+
+M.SERVICE_LOG_KEEP = 200
+
+function M.Services() return R().services end
+
+function M.GetService(name)
+	for i, s in ipairs(R().services) do if s.name == name then return s, i end end
+end
+
+function M.SaveService(oldName, name, price)
+	name = U.Trim(name)
+	if name == "" then return nil, "Give the service a name, for example Lockpicking or Portal: Orgrimmar." end
+	local clash = M.GetService(name)
+	local s = oldName and M.GetService(oldName)
+	if clash and clash ~= s then return nil, name .. " is already on the list." end
+	if not s then
+		s = {}
+		table.insert(R().services, s)
+	end
+	s.name = name
+	s.price = (tonumber(price) or 0) > 0 and math.floor(tonumber(price)) or nil
+	table.sort(R().services, function(a, b) return a.name < b.name end)
+	return s
+end
+
+function M.DeleteService(name)
+	local _, i = M.GetService(name)
+	if i then table.remove(R().services, i) end
+end
+
+-- The services a class usually sells, as a starting point.
+M.CLASS_SERVICES = {
+	MAGE = { "Portal" },
+	WARLOCK = { "Summon" },
+	ROGUE = { "Lockpicking" },
+}
+
+-- What a spell cast during a trade, or just before one, was as a service. Returns the service
+-- name for the order ("Lockpicking", "Enchant Bracer - Minor Stamina", "Portal: Orgrimmar",
+-- "Summon"), and whether it is done through the trade window's "Will not be traded" slot.
+function M.ServiceForSpell(spell)
+	if type(spell) ~= "string" or spell == "" then return nil end
+	if spell == "Pick Lock" then return "Lockpicking", true end
+	if spell:find("^Enchant ") then return spell, true end
+	if spell:find("^Portal: ") then return spell, false end
+	if spell == "Ritual of Summoning" then return "Summon", false end
+	return nil
+end
+
+-- A portal or summon was cast: kept so a payment trade soon after can be tied to it.
+function M.LogServiceCast(name, now, target)
+	local log = R().serviceLog
+	log[#log + 1] = { name = name, time = now, target = target, by = M.me }
+	while #log > M.SERVICE_LOG_KEEP do table.remove(log, 1) end
+	return log[#log]
+end
+
+-- The portal or summon cast in the last `within` seconds, most recent first, if any.
+function M.RecentServiceCast(now, within)
+	local log = R().serviceLog
+	local last = log[#log]
+	if last and now - last.time <= (within or 600) then return last end
+end
+
+-- Records a service done for someone. trade: { received = items they handed over (materials,
+-- e.g. for an enchant), gold = gold they paid }. item: what it was done on ("Iron Lockbox").
+-- note: extra words for the order's notes. Fills in their open Opty for this service, if any.
+function M.RecordService(key, service, item, trade, now, note)
+	M.EnsureContact(key, now)
+	trade = trade or {}
+	local gold = math.max(0, math.floor((tonumber(trade.gold) or 0) + 0.5))
+	local desc = item and (service .. ": " .. item) or service
+	local received = cleanLines(trade.received or {}, true)
+	for _, l in ipairs(received) do l.kind = "mats" end
+	local o = { id = M.NewId(), created = now, updated = now, contact = key, type = "service", desc = desc,
+		items = {}, received = received, price = gold, notes = note or "", trades = 1,
+		status = gold > 0 and "paid" or "delivered", service = service }
+	if gold > 0 then o.paidAt = now end
+	attribute(o)
+	-- An open Opty for this service is won by it.
+	for _, opp in ipairs(R().opportunities) do
+		if opp.contact == key and M.IsOpenOpportunity(opp) and opp.product and opp.product.name
+			and desc:sub(1, #opp.product.name) == opp.product.name then
+			opp.stage, opp.order, opp.updated, opp.closedAt = "won", o.id, now, now
+			o.opportunity = opp.id
+			o.price = o.price + (opp.paid or 0)
+			break
+		end
+	end
+	table.insert(R().orders, o)
+	closeLeads(key)
+	autoStatus(key)
+	return o
+end
+
+-- How often a service was sold, and for how much (gold plus goods paid with), from its orders.
+function M.ServiceStats(name)
+	local n, earned = 0, 0
+	for _, o in ipairs(R().orders) do
+		if o.type == "service" and o.status ~= "cancelled" and type(o.desc) == "string" and o.desc:sub(1, #name) == name then
+			n = n + 1
+			local g, goods = M.OrderValue(o)
+			earned = earned + g + goods
+		end
+	end
+	return n, earned
 end
 
 -- "3:05" or "1:02:00"

@@ -122,6 +122,16 @@ An **opportunity** is a need written down: *Skotor Ironmark needs 5 silver*, *Cl
 - **Trades follow the Opty.** When someone with an open Opty trades you materials, WoW CRM asks *"Are these for their Opty?"*. Yes logs them on the Opty and no order is made yet. When you hand over the goods, it offers to **Deliver the Opty**: that logs the order, with their materials as supplied and the gold they paid. **Not for it** goes to the usual order question.
 - **Won: make it an order** starts an order with the request's first line as the item still to hand over. The full request goes in the order's notes. Your next trade with them fills it in, as with any order.
 
+## Services: portals, summons, lockpicking, enchants
+
+Not everything you sell is crafted. **Products > Services** lists what you do for people, with your usual price (or none, for tips), how often you have done each, and what it earned. **Add my class's usual services** starts the list: Portal for mages, Summon for warlocks, Lockpicking for rogues. Services can be picked on an Opty and when a lead becomes an order, like products.
+
+**Logged by themselves:**
+- **Lockpicking and enchants.** The customer puts their lockbox or item in the trade window's **"Will not be traded"** slot, you pick the lock or cast the enchant, and the trade completes. WoW CRM logs a service order (*Lockpicking: Iron Lockbox*, *Enchant Bracer - Minor Stamina: Bracers of the Bear*) with any tip, and any materials they handed over as supplied. No prompt.
+- **Portals and summons.** When you cast one, WoW CRM remembers it (for a summon, also who you summoned). If someone trades you gold within 10 minutes, it asks *"Payment for Portal: Orgrimmar?"*. Each payer gets their own order.
+
+If the customer has an open Opty for that service, the order wins it.
+
 ## Buff reminders
 
 WoW CRM includes the buff reminders from the creator's **WoW Utils** add-on: a strip that pops up when you are missing a weapon stone, food, tracking (Find Minerals, Find Herbs), elixirs or camp buffs, says where to find what you need (bags, bank, other characters), and lists what is worth getting.
